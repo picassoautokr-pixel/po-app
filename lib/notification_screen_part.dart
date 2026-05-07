@@ -1,24 +1,33 @@
 part of 'main.dart';
 
-/// Firestore `notifications/{notificationId}` 권장 필드:
-/// - userId (String): 받는 사람 uid
-/// - type: "chat" | "apply" | "accept" | "reject"
-/// - title, body (String)
-/// - targetId: chat 유형이면 `chats` 문서 id, 나머지는 `collaborationRequests` 문서 id
-/// - isRead (bool)
-/// - createdAt (Timestamp) — 쿼리용, `userId` + `createdAt` 내림차순 색인 필요
+/// Firestore `notifications/{notificationId}` 필드:
+/// notificationId, userId, type, title, body, targetId, targetType,
+/// isRead, createdAt, readAt
 
 Future<void> _markNotificationRead(String notificationId) async {
   final id = notificationId.trim();
   if (id.isEmpty) return;
   try {
-    await FirebaseFirestore.instance
-        .collection('notifications')
-        .doc(id)
-        .update(<String, Object?>{'isRead': true});
+    await FirebaseFirestore.instance.collection('notifications').doc(id).update(
+      <String, Object?>{
+        'isRead': true,
+        'readAt': FieldValue.serverTimestamp(),
+      },
+    );
   } on Object {
     // 읽음 처리 실패는 조용히 무시 (목록은 다시 시도 가능)
   }
+}
+
+/// 알림 문서의 이동 라우트: 신규 [targetType] 또는 레거시 [type].
+String _notificationEffectiveTargetType(Map<String, dynamic>? data) {
+  if (data == null) return '';
+  final tt = _matchingFieldStr(data['targetType']).trim().toLowerCase();
+  if (tt.isNotEmpty) return tt;
+  final ty = _matchingFieldStr(data['type']).trim().toLowerCase();
+  if (ty == 'chat') return 'chat';
+  if (ty == 'review') return 'review';
+  return 'request';
 }
 
 Future<void> _navigateFromNotificationDoc(
@@ -28,21 +37,20 @@ Future<void> _navigateFromNotificationDoc(
   final uid = FirebaseAuth.instance.currentUser?.uid;
   if (uid == null || !context.mounted) return;
 
-  final type = (doc.data()['type'] as String?)?.trim() ?? '';
-  final targetId = (doc.data()['targetId'] as String?)?.trim() ?? '';
+  final targetId =
+      (_matchingFieldStr(doc.data()['targetId'])).trim();
+  final route = _notificationEffectiveTargetType(doc.data());
 
   if (targetId.isEmpty) {
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('이동할 대상이 없습니다.')),
-    );
     return;
   }
 
-  switch (type) {
+  switch (route) {
     case 'chat':
-      final snap =
-          await FirebaseFirestore.instance.collection('chats').doc(targetId).get();
+      final snap = await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(targetId)
+          .get();
       if (!context.mounted) return;
       if (!snap.exists || snap.data() == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -58,14 +66,18 @@ Future<void> _navigateFromNotificationDoc(
         );
         return;
       }
-      final partnerUid = _chatPartnerUidOrInfer(d, uid);
+      var partnerUid = _matchingFieldStr(d['partnerUid']);
+      if (partnerUid.isEmpty) {
+        partnerUid = _chatPartnerUidOrInfer(d, uid);
+      }
+      final title = _collaborationRequestString(d['requestTitle']);
+      if (!context.mounted) return;
       if (partnerUid.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('대화 상대 정보를 찾을 수 없습니다.')),
         );
         return;
       }
-      final title = _collaborationRequestString(d['requestTitle']);
       await Navigator.of(context).push<void>(
         poSmoothPushRoute<void>(
           ChatScreen(
@@ -77,9 +89,29 @@ Future<void> _navigateFromNotificationDoc(
         ),
       );
       break;
-    case 'apply':
-    case 'accept':
-    case 'reject':
+    case 'review':
+      final reqSnap = await FirebaseFirestore.instance
+          .collection('collaborationRequests')
+          .doc(targetId)
+          .get();
+      if (!context.mounted) return;
+      if (!reqSnap.exists || reqSnap.data() == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('공고를 찾을 수 없습니다.')),
+        );
+        return;
+      }
+      final titleText = _collaborationDisplayTitle(reqSnap.data()!);
+      await Navigator.of(context).push<void>(
+        poSmoothPushRoute<void>(
+          ReviewScreen(
+            requestTitle: titleText.isEmpty ? targetId : titleText,
+          ),
+        ),
+      );
+      break;
+    case 'request':
+    default:
       final reqSnap = await FirebaseFirestore.instance
           .collection('collaborationRequests')
           .doc(targetId)
@@ -93,11 +125,6 @@ Future<void> _navigateFromNotificationDoc(
       }
       _openCollaborationRequestDetailFromDoc(context, reqSnap);
       break;
-    default:
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('알 수 없는 알림 유형입니다. ($type)')),
-      );
   }
 }
 
@@ -154,7 +181,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
           style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
         ),
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      body: SafeArea(
+        top: false,
+        child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: stream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting &&
@@ -162,15 +191,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
+            poReportFirestoreSnapshotError(
+              'notifications_screen',
+              snapshot.error!,
+            );
             return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: SelectableText(
-                  '알림을 불러오지 못했습니다.\n${snapshot.error}\n\n'
-                  'Firestore에 notifications 컬렉션에 대한 userId + createdAt 복합 색인이 필요할 수 있습니다.',
-                  style: textTheme.bodySmall?.copyWith(height: 1.45),
-                ),
-              ),
+              child: poFirestoreUserErrorPlaceholder(context),
             );
           }
 
@@ -185,7 +211,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
           }
 
           return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(0, 8, 0, 24),
+            padding: EdgeInsets.fromLTRB(
+              0,
+              8,
+              0,
+              poFullScreenScrollBottomPadding(context),
+            ),
             itemCount: docs.length,
             separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade200),
             itemBuilder: (ctx, index) {
@@ -195,6 +226,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
               final body = (data['body'] as String?)?.trim() ?? '';
               final isRead = data['isRead'] == true;
               final created = _formatCreatedAt(data['createdAt']);
+              final targetId =
+                  (_matchingFieldStr(data['targetId'])).trim();
 
               return Material(
                 color: isRead ? Colors.white : _accent.withValues(alpha: 0.06),
@@ -202,6 +235,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   onTap: () async {
                     await _markNotificationRead(doc.id);
                     if (!context.mounted) return;
+                    if (targetId.isEmpty) return;
                     await _navigateFromNotificationDoc(context, doc);
                   },
                   child: Padding(
@@ -248,6 +282,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
                                   ),
                                 ),
                               ],
+                              if (targetId.isEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '(연결 화면 없음)',
+                                  style: textTheme.labelSmall?.copyWith(
+                                    color: Colors.grey.shade500,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -259,6 +302,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
             },
           );
         },
+        ),
       ),
     );
   }

@@ -9,6 +9,8 @@ class CollaborationFeedTabBody extends StatelessWidget {
     required this.selectedMainCategories,
     required this.subKeySet,
     required this.favoritesOnly,
+    required this.selectedSortOption,
+    required this.sortDescending,
   });
 
   final String regionFilter;
@@ -16,6 +18,8 @@ class CollaborationFeedTabBody extends StatelessWidget {
   final Set<String> selectedMainCategories;
   final Set<String> subKeySet;
   final bool favoritesOnly;
+  final String? selectedSortOption;
+  final bool sortDescending;
 
   Set<String> get _distinctSubs =>
       ServiceCategoryCatalog.distinctSubs(subKeySet);
@@ -38,6 +42,12 @@ class CollaborationFeedTabBody extends StatelessWidget {
       stream:
           FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
       builder: (context, meSnap) {
+        if (meSnap.hasError) {
+          poReportFirestoreSnapshotError(
+            'collaboration_feed_me_doc',
+            meSnap.error!,
+          );
+        }
         final favReqRaw = meSnap.data?.data()?['favoriteRequestIds'];
         final favoriteRequestIds = <String>{
           if (favReqRaw is Iterable)
@@ -56,15 +66,12 @@ class CollaborationFeedTabBody extends StatelessWidget {
               return const Center(child: CircularProgressIndicator());
             }
             if (collabQs.hasError) {
+              poReportFirestoreSnapshotError(
+                'collaboration_feed_requests',
+                collabQs.error!,
+              );
               return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    _firestoreLoadErrorHint(collabQs.error!),
-                    textAlign: TextAlign.center,
-                    style: textTheme.bodyMedium,
-                  ),
-                ),
+                child: poFirestoreUserErrorPlaceholder(context),
               );
             }
 
@@ -87,22 +94,24 @@ class CollaborationFeedTabBody extends StatelessWidget {
                   .toList(growable: false);
             }
 
-            list.sort((a, b) {
-              final primary = _collabSortForSearch(a.data(), b.data());
-              if (primary != 0) return primary;
-              return _compareRecommendedCollabs(
-                a.data(),
-                b.data(),
-                regionFilter: regionFilter,
-                selectedMainCategories: selectedMainCategories,
-                selectedSubLabels: _distinctSubs,
-              );
-            });
+            final searchQ = _poParseSearchQuery(keyword);
+            list.sort((a, b) => _compareCollabDocsOrdered(
+                  a.data(),
+                  b.data(),
+                  searchQ: searchQ,
+                  sortOption: selectedSortOption,
+                  sortDescending: sortDescending,
+                  regionFilter: regionFilter,
+                  selectedMainCategories: selectedMainCategories,
+                  selectedSubLabels: _distinctSubs,
+                ));
 
             if (list.isEmpty) {
               return Center(
                 child: Text(
-                  '표시할 공고가 없습니다.',
+                  !searchQ.isEmpty
+                      ? '검색 결과가 없습니다.'
+                      : '표시할 공고가 없습니다.',
                   style: textTheme.bodyMedium?.copyWith(
                     color: Colors.grey.shade600,
                   ),
@@ -110,15 +119,38 @@ class CollaborationFeedTabBody extends StatelessWidget {
               );
             }
 
-            return ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              itemCount: list.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (ctx, i) => _collaborationFeedListCard(
-                ctx,
-                list[i],
-                favoriteRequestIds: favoriteRequestIds,
-              ),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (!searchQ.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                    child: Text(
+                      '검색 결과 ${list.length}개',
+                      style: textTheme.labelLarge?.copyWith(
+                        color: Colors.grey.shade800,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                Expanded(
+                  child: ListView.separated(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      8,
+                      16,
+                      poMainShellTabScrollBottomPadding(context),
+                    ),
+                    itemCount: list.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
+                    itemBuilder: (ctx, i) => _collaborationFeedListCard(
+                      ctx,
+                      list[i],
+                      favoriteRequestIds: favoriteRequestIds,
+                    ),
+                  ),
+                ),
+              ],
             );
           },
         );

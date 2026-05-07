@@ -44,7 +44,12 @@ class MyPageTabScreenV2 extends StatelessWidget {
                       : '';
 
                   return SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      20,
+                      20,
+                      poFullScreenScrollBottomPadding(context),
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -129,27 +134,186 @@ class MyPageTabScreenV2 extends StatelessWidget {
                           child: Padding(
                             padding: const EdgeInsets.all(14),
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 Text(
-                                  '사업자 인증 상태',
+                                  '사업자 인증',
                                   style: textTheme.labelSmall?.copyWith(
                                     color: Colors.grey.shade600,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
                                 const SizedBox(height: 8),
-                                Text(
-                                  '미인증 · 서류 제출 대기',
-                                  style: textTheme.bodySmall?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                Builder(
+                                  builder: (ctx) {
+                                    final bizStat =
+                                        poBusinessVerificationUiState(data);
+                                    final rejectReason =
+                                        _matchingFieldStr(
+                                      data?[
+                                          'businessVerificationRejectReason'],
+                                    );
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (bizStat == 'verified') ...[
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: poVerifiedCompanyBadgeChip(
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                        ],
+                                        Text(
+                                          poBusinessVerificationMyPageLine(
+                                            bizStat,
+                                          ),
+                                          style: textTheme.bodySmall?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                            height: 1.4,
+                                          ),
+                                        ),
+                                        if (bizStat == 'rejected' &&
+                                            rejectReason.isNotEmpty) ...[
+                                          const SizedBox(height: 8),
+                                          DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              color: Colors.red.shade50,
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                              border: Border.all(
+                                                color: Colors.red.shade100,
+                                              ),
+                                            ),
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(10),
+                                              child: Text(
+                                                '반려 사유: $rejectReason',
+                                                style: textTheme.bodySmall
+                                                    ?.copyWith(
+                                                  color: Colors.red.shade900,
+                                                  height: 1.4,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                Builder(
+                                  builder: (ctx) {
+                                    final bizStat =
+                                        poBusinessVerificationUiState(data);
+                                    if (bizStat == 'pending') {
+                                      return Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            color: Colors.amber.shade50,
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            border: Border.all(
+                                              color: Colors.amber.shade200,
+                                            ),
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 6,
+                                            ),
+                                            child: Text(
+                                              '심사중',
+                                              style: textTheme.labelMedium
+                                                  ?.copyWith(
+                                                color:
+                                                    Colors.amber.shade900,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    final canApply = bizStat == 'unverified' ||
+                                        bizStat == 'rejected';
+                                    if (!canApply) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    return OutlinedButton(
+                                      onPressed: () {
+                                        runWithBriefLoading(ctx, () {
+                                          if (!ctx.mounted) return;
+                                          Navigator.of(ctx).push(
+                                            poSmoothPushRoute<void>(
+                                              const BusinessVerificationScreen(),
+                                            ),
+                                          );
+                                        });
+                                      },
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: _accent,
+                                        side: BorderSide(
+                                          color: _accent.withValues(
+                                            alpha: 0.45,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        bizStat == 'rejected'
+                                            ? '재신청하기'
+                                            : '사업자 인증 신청',
+                                      ),
+                                    );
+                                  },
                                 ),
                               ],
                             ),
                           ),
                         ),
                         const SizedBox(height: 12),
+                        if (poIsAdminUser(data))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: OutlinedButton(
+                              onPressed: () {
+                                Navigator.of(context).push(
+                                  poSmoothPushRoute<void>(
+                                    const AdminScreen(),
+                                  ),
+                                );
+                              },
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.grey.shade900,
+                                side: BorderSide(
+                                  color: Colors.grey.shade400,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text('관리자 메뉴'),
+                            ),
+                          ),
+                        FinishDetailsListWidget(
+                          userId: uid,
+                          editable: true,
+                        ),
+                        const SizedBox(height: 16),
                         Text(
                           '시공 분야 요약',
                           style: textTheme.labelSmall?.copyWith(

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'region_normalize.dart';
 import 'service_category_catalog.dart';
 
 /// 개발·테스트용: 고정 문서 ID로 [users] 5건 + 매칭 테스트 8건, [collaborationRequests] 5건을
@@ -10,6 +11,15 @@ Future<void> seedDevFirestoreTestData() async {
   final ts = FieldValue.serverTimestamp();
 
   final film = ServiceCategoryCatalog.filmMainTitle;
+
+  Map<String, Object?> collaborationRegionPack(String zone) {
+    final trimmed = zone.trim();
+    final p = PoRegionFields.fromRegionFull(trimmed);
+    return <String, Object?>{
+      'location': p.regionFull.isNotEmpty ? p.regionFull : trimmed,
+      ...poRegionCollaborationFirestoreMap(p),
+    };
+  }
 
   void setUser(String docId, Map<String, Object?> fields) {
     batch.set(
@@ -121,6 +131,7 @@ Future<void> seedDevFirestoreTestData() async {
   });
 
   setRequest('test_request_1', <String, Object?>{
+    ...collaborationRegionPack('서울 강남구 역삼동'),
     'ownerUid': 'dev_collab_owner_1',
     'ownerEmail': 'dev_collab_1@example.test',
     'title': 'PPF + 랩핑 협업 구함',
@@ -130,14 +141,17 @@ Future<void> seedDevFirestoreTestData() async {
       <String, String>{'main': film, 'sub': 'PPF'},
       <String, String>{'main': film, 'sub': '랩핑'},
     ],
-    'location': '서울 강남구',
     'date': '협의 · 급건 우대',
+    'deadlineType': 'date',
+    'deadline': Timestamp.fromDate(DateTime(2026, 12, 15)),
+    'deadlineText': '2026-12-15',
     'description':
         '필름 시공(PPF·랩핑) 경험 있는 분과 현장 공유·일정 조율 가능합니다.',
     'status': 'open',
   });
 
   setRequest('test_request_2', <String, Object?>{
+    ...collaborationRegionPack('경기 수원시'),
     'ownerUid': 'dev_collab_owner_2',
     'ownerEmail': 'dev_collab_2@example.test',
     'title': '틴팅 시공 인력 구합니다',
@@ -146,13 +160,15 @@ Future<void> seedDevFirestoreTestData() async {
     'serviceCategories': <Map<String, String>>[
       <String, String>{'main': film, 'sub': '썬팅 (틴팅)'},
     ],
-    'location': '경기 수원시',
     'date': '내주 중',
+    'deadlineType': 'always',
+    'deadlineText': '수시모집중',
     'description': '필름 시공 라인에서 썬팅 전문으로 같이 하실 분 찾습니다.',
     'status': '모집중',
   });
 
   setRequest('test_request_3', <String, Object?>{
+    ...collaborationRegionPack('인천'),
     'ownerUid': 'dev_collab_owner_3',
     'ownerEmail': 'dev_collab_3@example.test',
     'title': '블랙박스 설치 협업',
@@ -161,13 +177,16 @@ Future<void> seedDevFirestoreTestData() async {
     'serviceCategories': <Map<String, String>>[
       <String, String>{'main': '전장 시공', 'sub': '블랙박스'},
     ],
-    'location': '인천',
     'date': '주말 가능',
+    'deadlineType': 'date',
+    'deadline': Timestamp.fromDate(DateTime(2026, 6, 1)),
+    'deadlineText': '2026-06-01',
     'description': '전장 시공 업체와 블랙박스 동선 정리·설치 협업 요청드립니다.',
     'status': 'open',
   });
 
   setRequest('test_request_4', <String, Object?>{
+    ...collaborationRegionPack('부산 해운대구'),
     'ownerUid': 'dev_collab_owner_4',
     'ownerEmail': 'dev_collab_4@example.test',
     'title': '실내 크리닝 긴급 협업',
@@ -179,7 +198,6 @@ Future<void> seedDevFirestoreTestData() async {
         'sub': '실내 크리닝 / 디테일링',
       },
     ],
-    'location': '부산 해운대구',
     'date': '당일·익일',
     'description':
         '실내 시공 약속이 몰려 인력 한 분만 도와주실 분 구합니다. 디테일링 경험자 우대.',
@@ -187,6 +205,7 @@ Future<void> seedDevFirestoreTestData() async {
   });
 
   setRequest('test_request_5', <String, Object?>{
+    ...collaborationRegionPack('대전'),
     'ownerUid': 'dev_collab_owner_5',
     'ownerEmail': 'dev_collab_5@example.test',
     'title': '엔진오일 출장 가능 업체 구함',
@@ -195,7 +214,6 @@ Future<void> seedDevFirestoreTestData() async {
     'serviceCategories': <Map<String, String>>[
       <String, String>{'main': '정비 & 경정비', 'sub': '엔진오일'},
     ],
-    'location': '대전',
     'date': '평일 오전',
     'description': '정비·경정비 반경 내 엔진오일 출장 가능 업체 연락 주세요.',
     'status': 'open',

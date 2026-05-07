@@ -91,6 +91,140 @@ void _feedPruneSubKeysForSelectedMains(
   });
 }
 
+/// 리스트 정렬 옵션 (기본순은 null 로 표현).
+const String kPoListSortRating = '평점순';
+const String kPoListSortDistance = '거리순';
+const String kPoListSortValue = '가성비순';
+const String kPoListSortDeadline = '마감일순';
+const String kPoListSortResponse = '응답순';
+const String kPoListSortDisplayName = '표시이름순';
+
+const List<String> kPoListSortChoicesHome = <String>[
+  kPoListSortRating,
+  kPoListSortDistance,
+  kPoListSortValue,
+  kPoListSortDisplayName,
+];
+
+const List<String> kPoListSortChoicesCollab = <String>[
+  kPoListSortRating,
+  kPoListSortDistance,
+  kPoListSortDeadline,
+  kPoListSortResponse,
+];
+
+/// 각 정렬의 기본 방향(↓=내림차순=true, ↑=오름차순=false).
+bool poListSortDefaultDescending(String option) {
+  switch (option) {
+    case kPoListSortRating:
+    case kPoListSortResponse:
+      return true;
+    case kPoListSortDistance:
+    case kPoListSortValue:
+    case kPoListSortDeadline:
+    case kPoListSortDisplayName:
+      return false;
+    default:
+      return true;
+  }
+}
+
+String _poListSortHeaderLabel(String? selected, bool sortDescending) {
+  if (selected == null || selected.isEmpty) return '기본순';
+  final arrow = sortDescending ? '↓' : '↑';
+  return '$selected $arrow';
+}
+
+Future<void> showPoListSortSheet({
+  required BuildContext context,
+  required Color accent,
+  required List<String> sortChoices,
+  required String? initialSelection,
+  required bool initialDescending,
+  required void Function(String? sort, bool descending) onPick,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: false,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) {
+      final textTheme = Theme.of(ctx).textTheme;
+      final viewInsets = MediaQuery.viewInsetsOf(ctx);
+
+      void handlePick(String? opt) {
+        if (opt == null || opt.isEmpty) {
+          onPick(null, false);
+        } else if (opt == initialSelection) {
+          onPick(opt, !initialDescending);
+        } else {
+          onPick(opt, poListSortDefaultDescending(opt));
+        }
+        Navigator.of(ctx).pop();
+      }
+
+      return Padding(
+        padding: EdgeInsets.only(
+          bottom: viewInsets.bottom +
+              poBottomSheetContentBottomPadding(ctx, extra: 8),
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                  child: Text(
+                    '정렬',
+                    textAlign: TextAlign.center,
+                    style: textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  title: const Text('기본순'),
+                  trailing: initialSelection == null
+                      ? Icon(Icons.check_rounded, color: accent)
+                      : null,
+                  onTap: () => handlePick(null),
+                ),
+                for (final opt in sortChoices)
+                  ListTile(
+                    title: Text(opt),
+                    trailing: initialSelection == opt
+                        ? Icon(Icons.check_rounded, color: accent)
+                        : null,
+                    onTap: () => handlePick(opt),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
 /// 홈 상단 요약: 예) `선택: 외장 시공, 필름 시공 / PPF, 랩핑` · 비어 있으면 `전체 시공분야`.
 String _feedPublicSummaryLine(Set<String> mains, Set<String> subKeys) {
   final mainLabels = <String>[
@@ -118,25 +252,39 @@ Future<void> showPoServiceCategoryFilterSheet({
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    useSafeArea: true,
+    useSafeArea: false,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
     builder: (ctx) {
       final viewInsets = MediaQuery.viewInsetsOf(ctx);
-      final h = MediaQuery.sizeOf(ctx).height;
-      final sheetH = (h * 0.8).clamp(320.0, h);
       return Padding(
-        padding: EdgeInsets.only(bottom: viewInsets.bottom),
-        child: SizedBox(
-          height: sheetH,
-          child: PoServiceCategoryFilterSheet(
-            accent: accent,
-            initialMains: initialMains,
-            initialSubKeys: initialSubKeys,
-            onApply: onApply,
-            onResetAll: onResetAll,
+        padding: EdgeInsets.only(
+          bottom: viewInsets.bottom +
+              poBottomSheetContentBottomPadding(ctx, extra: 8),
+        ),
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              var limit = constraints.maxHeight;
+              if (!limit.isFinite || limit <= 0) {
+                limit = MediaQuery.sizeOf(context).height * 0.85;
+              }
+              final sheetH = (limit * 0.92).clamp(320.0, limit);
+              return SizedBox(
+                height: sheetH,
+                child: PoServiceCategoryFilterSheet(
+                  accent: accent,
+                  initialMains: initialMains,
+                  initialSubKeys: initialSubKeys,
+                  onApply: onApply,
+                  onResetAll: onResetAll,
+                ),
+              );
+            },
           ),
         ),
       );
@@ -287,7 +435,15 @@ class _PoServiceCategoryFilterSheetState
         Divider(height: 1, color: Colors.grey.shade200),
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              math.max(
+                44,
+                poBottomSheetContentBottomPadding(context, extra: 44),
+              ),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -432,7 +588,7 @@ class _PoServiceCategoryFilterSheetState
   }
 }
 
-/// 홈·구인·협업 공통 상단 (1행: 지역·즐겨찾기·알림·프로필 / 2행: 시공분야·검색 / 요약).
+/// 홈·구인·협업 공통 상단 (1행: 지역·즐겨찾기·알림·프로필 / 2행: 검색·정렬 라벨 / 요약=시공분야).
 class PoMainListHeader extends StatelessWidget {
   const PoMainListHeader({
     super.key,
@@ -450,6 +606,10 @@ class PoMainListHeader extends StatelessWidget {
     required this.selectedMainCategories,
     required this.selectedSubKeys,
     required this.onOpenCategoryFilter,
+    required this.selectedSortOption,
+    required this.sortDescending,
+    required this.onOpenSortSheet,
+    this.notificationUnreadCount = 0,
   });
 
   final Color accent;
@@ -466,6 +626,10 @@ class PoMainListHeader extends StatelessWidget {
   final Set<String> selectedMainCategories;
   final Set<String> selectedSubKeys;
   final VoidCallback onOpenCategoryFilter;
+  final String? selectedSortOption;
+  final bool sortDescending;
+  final VoidCallback onOpenSortSheet;
+  final int notificationUnreadCount;
 
   @override
   Widget build(BuildContext context) {
@@ -475,6 +639,8 @@ class PoMainListHeader extends StatelessWidget {
       selectedSubKeys,
     );
     final hasSearchText = searchController.text.trim().isNotEmpty;
+    final sortLine =
+        _poListSortHeaderLabel(selectedSortOption, sortDescending);
 
     return Material(
       color: Colors.white,
@@ -526,10 +692,53 @@ class PoMainListHeader extends StatelessWidget {
                     color: favoritesOnly ? accent : Colors.grey.shade700,
                   ),
                 ),
-                IconButton(
-                  tooltip: '알림',
-                  onPressed: onNotificationTap,
-                  icon: Icon(Icons.notifications_none_rounded, color: accent),
+                Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.topRight,
+                  children: [
+                    IconButton(
+                      tooltip: '알림',
+                      onPressed: onNotificationTap,
+                      icon: Icon(
+                        Icons.notifications_none_rounded,
+                        color: accent,
+                      ),
+                    ),
+                    if (notificationUnreadCount > 0)
+                      Positioned(
+                        right: 10,
+                        top: 10,
+                        child: IgnorePointer(
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: notificationUnreadCount > 9 ? 5 : 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade600,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              notificationUnreadCount > 99
+                                  ? '99+'
+                                  : '$notificationUnreadCount',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                height: 1.05,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 IconButton(
                   tooltip: '마이페이지',
@@ -542,29 +751,9 @@ class PoMainListHeader extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                OutlinedButton(
-                  onPressed: onOpenCategoryFilter,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: accent,
-                    side: BorderSide(color: accent.withValues(alpha: 0.5)),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 12,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: Text(
-                    '시공분야',
-                    style: textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: searchController,
@@ -606,35 +795,71 @@ class PoMainListHeader extends StatelessWidget {
                     ),
                   ),
                 ),
+                const SizedBox(width: 10),
+                InkWell(
+                  onTap: onOpenSortSheet,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.fromLTRB(8, 10, 4, 10),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          sortLine,
+                          style: textTheme.labelLarge?.copyWith(
+                            color: accent,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: accent,
+                          size: 22,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.grey.shade50,
+            child: Material(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                onTap: onOpenCategoryFilter,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.tune_rounded, size: 20, color: accent),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        summary,
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: Colors.black87,
-                          height: 1.4,
-                          fontWeight: FontWeight.w600,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.tune_rounded, size: 20, color: accent),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          summary,
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: Colors.black87,
+                            height: 1.4,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: Colors.grey.shade600,
+                        size: 22,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

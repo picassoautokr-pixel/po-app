@@ -24,14 +24,88 @@ import 'firebase_options.dart';
 import 'region_normalize.dart';
 import 'service_category_catalog.dart';
 
+part 'tabs/feed_shell_part.dart';
 part 'tabs/home_tab_part.dart';
 part 'tabs/requests_tab_part.dart';
 part 'tabs/chat_tab_part.dart';
 part 'tabs/favorite_partners_tab_part.dart';
 part 'tabs/my_page_tab_part.dart';
-part 'tabs/feed_shell_part.dart';
 part 'tabs/collaboration_feed_tab_part.dart';
 part 'notification_screen_part.dart';
+part 'business_verification_screen_part.dart';
+part 'admin_screens_part.dart';
+part 'business_claim_part.dart';
+part 'business_bulk_upload_part.dart';
+
+// ---------------------------------------------------------------------------
+// Firestore 로드 오류 UX — UI에는 일반 문구만, [debugPrint]에 원본 에러.
+// ---------------------------------------------------------------------------
+
+const String poFirestoreLoadErrorTitle =
+    '데이터를 불러오는 중 문제가 발생했습니다.';
+const String poFirestoreLoadErrorSubtitle = '잠시 후 다시 시도해주세요.';
+
+bool poFirestoreErrorIsFailedPrecondition(Object? e) {
+  if (e is FirebaseException) {
+    return e.code == 'failed-precondition';
+  }
+  final s = e?.toString().toLowerCase() ?? '';
+  return s.contains('failed-precondition');
+}
+
+void poDebugFirestoreError(String contextTag, Object? error,
+    [StackTrace? stackTrace]) {
+  debugPrint('[Firestore][$contextTag] $error');
+  if (poFirestoreErrorIsFailedPrecondition(error)) {
+    debugPrint(
+      '[Firestore][$contextTag] failed-precondition: '
+      'Firestore 콘솔에서 복합 색인 또는 보안 규칙을 확인하세요.',
+    );
+  }
+  if (stackTrace != null) {
+    debugPrint('[Firestore][$contextTag stack] $stackTrace');
+  }
+}
+
+/// [StreamBuilder]/[FutureBuilder] `hasError` 분기에서 호출합니다.
+void poReportFirestoreSnapshotError(String contextTag, Object error) =>
+    poDebugFirestoreError(contextTag, error);
+
+Widget poFirestoreUserErrorPlaceholder(
+  BuildContext context, {
+  double verticalPadding = 26,
+  IconData icon = Icons.folder_off_outlined,
+}) {
+  final tt = Theme.of(context).textTheme;
+  return Padding(
+    padding: EdgeInsets.fromLTRB(20, verticalPadding, 20, verticalPadding),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 42, color: Colors.grey.shade400),
+        const SizedBox(height: 14),
+        Text(
+          poFirestoreLoadErrorTitle,
+          textAlign: TextAlign.center,
+          style: tt.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          poFirestoreLoadErrorSubtitle,
+          textAlign: TextAlign.center,
+          style: tt.bodyMedium?.copyWith(
+            color: Colors.grey.shade600,
+            height: 1.45,
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
 /// 반투명 딤 위에 로딩을 약 1초 표시한 뒤 [action]을 실행합니다.
 Future<void> runWithBriefLoading(
@@ -250,7 +324,12 @@ class LoginScreen extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
+            padding: EdgeInsets.fromLTRB(
+              28,
+              16,
+              28,
+              poFullScreenScrollBottomPadding(context),
+            ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -339,8 +418,33 @@ class _MainShellTabHost {
   }
 }
 
+double _poMediaBottomInset(BuildContext context) =>
+    MediaQuery.paddingOf(context).bottom;
+
+/// 풀스크린 스크롤: 시스템 내비/제스처 [padding.bottom] + [extra].
+double poFullScreenScrollBottomPadding(BuildContext context,
+        {double extra = 100}) =>
+    _poMediaBottomInset(context) + extra;
+
+/// [MainShell] 탭 본문 리스트 — 하단 탭·시스템 내비로 가려지지 않게.
+double poMainShellTabScrollBottomPadding(BuildContext context,
+        {double extra = 110}) =>
+    _poMediaBottomInset(context) + extra;
+
+/// 모달 바텀시트 내부 스크롤/고정 패딩.
+double poBottomSheetContentBottomPadding(BuildContext context,
+        {double extra = 44}) =>
+    _poMediaBottomInset(context) + extra;
+
 String _collaborationRequestString(dynamic v) =>
     v is String ? v.trim() : '';
+
+/// 피드·상세·카드 공통: 공고 마감 표시 줄 (`deadlineText` 없으면 `-`).
+String _collaborationRecruitmentDeadlineLine(Map<String, dynamic>? data) {
+  if (data == null) return '-';
+  final t = _collaborationRequestString(data['deadlineText']);
+  return t.isEmpty ? '-' : t;
+}
 
 /// collaborationRequests.status → 카드 라벨
 String collaborationDisplayStatusKo(String raw) {
@@ -365,18 +469,130 @@ String collaborationDisplayStatusKo(String raw) {
   }
 }
 
-/// collaborationRequests/.../applications 의 status 표시용.
-String collaborationApplicationStatusKo(String raw) {
-  final s = raw.trim().toLowerCase();
+/// 내 지원 문서 `applications.status` → 통일 표시명.
+String collaborationMyApplicationStatusLabelKo(dynamic statusRaw) {
+  final s = _collaborationRequestString(statusRaw).toLowerCase();
+  if (s.isEmpty) return '승인대기';
   switch (s) {
     case 'pending':
-      return '검토중';
+      return '승인대기';
     case 'accepted':
-      return '채택';
+      return '채택됨';
+    case 'in_progress':
+      return '진행중';
+    case 'completed':
+    case 'complete':
+    case 'done':
+      return '완료';
     case 'rejected':
-      return '거절';
+      return '거절됨';
+    case 'cancelled':
+      return '취소됨';
     default:
-      return raw.trim().isEmpty ? '미등록' : raw.trim();
+      final t = _collaborationRequestString(statusRaw);
+      return t.isEmpty ? '승인대기' : t;
+  }
+}
+
+({Color background, Color foreground}) collaborationMyApplicationBadgeStyle(
+  dynamic statusRaw,
+) {
+  final s = _collaborationRequestString(statusRaw).toLowerCase();
+  if (s.isEmpty || s == 'pending') {
+    return (
+      background: const Color(0xFFE3F2FD),
+      foreground: const Color(0xFF1565C0),
+    );
+  }
+  switch (s) {
+    case 'accepted':
+      return (
+        background: const Color(0xFF1976D2),
+        foreground: Colors.white,
+      );
+    case 'in_progress':
+      return (
+        background: const Color(0xFF2E7D32),
+        foreground: Colors.white,
+      );
+    case 'completed':
+    case 'complete':
+    case 'done':
+      return (
+        background: const Color(0xFF263238),
+        foreground: Colors.white,
+      );
+    case 'rejected':
+    case 'cancelled':
+      return (
+        background: const Color(0xFFFFEBEE),
+        foreground: const Color(0xFFC62828),
+      );
+    default:
+      return (
+        background: Colors.grey.shade200,
+        foreground: Colors.grey.shade800,
+      );
+  }
+}
+
+bool _collaborationApplicationStatusCompletedLike(String raw) {
+  final s = raw.trim().toLowerCase();
+  return s == 'completed' || s == 'complete' || s == 'done';
+}
+
+/// collaborationRequests/.../applications 의 status 표시용 (작성자·지원목록 카드 등).
+String collaborationApplicationStatusKo(String raw) {
+  return collaborationMyApplicationStatusLabelKo(raw);
+}
+
+/// 파트너 본인 지원 카드·상세 — 지원 문서 상태 표기 통일.
+String collaborationMyApplicantCombinedStatusKo(
+  Map<String, dynamic>? application,
+) {
+  if (application == null) return '미등록';
+  return collaborationMyApplicationStatusLabelKo(application['status']);
+}
+
+/// `collectionGroup('applications').where(applicantUid).orderBy('createdAt')` 등 인덱스 안내 문구.
+String collaborationApplicationsIndexHint() {
+  return 'Firestore 인덱스가 필요할 수 있습니다.\n'
+      '콘솔 오류 링크로 복합 인덱스를 생성해 주세요.\n'
+      '컬렉션 그룹: applications\n'
+      '필드: applicantUid (==), createdAt (desc)';
+}
+
+enum CollaborationMyOutgoingFilterChip {
+  /// pending, accepted, in_progress (기본값)
+  inProgress,
+  all,
+  completed,
+  rejected,
+}
+
+bool collaborationMyOutgoingRowMatchesChip({
+  required Map<String, dynamic> applicationData,
+  required CollaborationMyOutgoingFilterChip chip,
+}) {
+  final appSt =
+      _collaborationRequestString(applicationData['status']).toLowerCase();
+
+  bool inProgressPass() {
+    if (appSt.isEmpty || appSt == 'pending') return true;
+    if (appSt == 'accepted') return true;
+    if (appSt == 'in_progress') return true;
+    return false;
+  }
+
+  switch (chip) {
+    case CollaborationMyOutgoingFilterChip.all:
+      return true;
+    case CollaborationMyOutgoingFilterChip.inProgress:
+      return inProgressPass();
+    case CollaborationMyOutgoingFilterChip.completed:
+      return _collaborationApplicationStatusCompletedLike(appSt);
+    case CollaborationMyOutgoingFilterChip.rejected:
+      return appSt == 'rejected' || appSt == 'cancelled';
   }
 }
 
@@ -554,6 +770,32 @@ Future<void> collaborationTouchChatRoomSummary({
   );
 }
 
+/// 앱 내부 알림 — [userId]가 비어 있으면 저장하지 않습니다.
+Future<void> createNotification({
+  required String userId,
+  required String type,
+  required String title,
+  required String body,
+  required String targetId,
+  required String targetType,
+}) async {
+  final uid = userId.trim();
+  if (uid.isEmpty) return;
+
+  final ref = FirebaseFirestore.instance.collection('notifications').doc();
+  await ref.set(<String, Object?>{
+    'notificationId': ref.id,
+    'userId': uid,
+    'type': type.trim(),
+    'title': title.trim(),
+    'body': body.trim(),
+    'targetId': targetId.trim(),
+    'targetType': targetType.trim(),
+    'isRead': false,
+    'createdAt': FieldValue.serverTimestamp(),
+  });
+}
+
 Future<void> collaborationEnsureChatRoomShell({
   required String chatId,
   required String myUid,
@@ -574,9 +816,139 @@ Future<void> collaborationEnsureChatRoomShell({
           requestTitle.trim().isEmpty ? '채팅' : requestTitle.trim(),
       'updatedAt': FieldValue.serverTimestamp(),
       'createdByCall': false,
+      'unreadCountByUser.${myUid.trim()}': 0,
+      'unreadCountByUser.$pu': 0,
     },
     SetOptions(merge: true),
   );
+}
+
+/// 메시지 발송 직후: 내 미읽음 0, 상대방 미읽음 +1 (`unreadCountByUser`).
+Future<void> collaborationApplyOutgoingUnreadCounts({
+  required String chatId,
+  required String myUid,
+  required String partnerUid,
+}) async {
+  final c = chatId.trim();
+  final me = myUid.trim();
+  final pu = partnerUid.trim();
+  if (c.isEmpty || me.isEmpty || pu.isEmpty || me == pu) return;
+
+  await FirebaseFirestore.instance.collection('chats').doc(c).set(
+    <String, Object?>{
+      'unreadCountByUser.$me': 0,
+      'unreadCountByUser.$pu': FieldValue.increment(1),
+    },
+    SetOptions(merge: true),
+  );
+}
+
+/// 채팅방 입장 시 현재 사용자의 미읽음을 0으로 초기화합니다.
+Future<void> collaborationResetUnreadForUserInChat({
+  required String chatId,
+  required String userUid,
+}) async {
+  final c = chatId.trim();
+  final u = userUid.trim();
+  if (c.isEmpty || u.isEmpty) return;
+
+  await FirebaseFirestore.instance.collection('chats').doc(c).set(
+    <String, Object?>{
+      'unreadCountByUser.$u': 0,
+    },
+    SetOptions(merge: true),
+  );
+}
+
+/// [chats] 스냅샷에서 현재 사용자 미읽음 합계.
+int poChatUnreadTotalForUser(
+  QuerySnapshot<Map<String, dynamic>> snap,
+  String uid,
+) {
+  final u = uid.trim();
+  if (u.isEmpty) return 0;
+  var t = 0;
+  for (final d in snap.docs) {
+    final raw = d.data()['unreadCountByUser'];
+    if (raw is Map<dynamic, dynamic>) {
+      final v = raw[u];
+      if (v is num) {
+        t += v.round().clamp(0, 999999);
+      }
+    }
+  }
+  return t;
+}
+
+Widget _poChatBottomNavIcon(int unread, {required bool selected}) {
+  return Stack(
+    clipBehavior: Clip.none,
+    alignment: Alignment.topRight,
+    children: [
+      Icon(
+        selected ? Icons.chat_rounded : Icons.chat_bubble_outline_rounded,
+      ),
+      if (unread > 0)
+        Positioned(
+          right: -6,
+          top: -4,
+          child: IgnorePointer(
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: unread > 9 ? 5 : 6,
+                vertical: 2,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.red.shade600,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+              alignment: Alignment.center,
+              child: Text(
+                unread > 99 ? '99+' : '$unread',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  height: 1.05,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+List<BottomNavigationBarItem> _poMainShellBottomNavItems(int chatUnread) {
+  return <BottomNavigationBarItem>[
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.home_outlined),
+      activeIcon: Icon(Icons.home_rounded),
+      label: '홈',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.handshake_outlined),
+      activeIcon: Icon(Icons.handshake),
+      label: '구인·협업',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.note_add_outlined),
+      activeIcon: Icon(Icons.note_add),
+      label: '내 요청',
+    ),
+    BottomNavigationBarItem(
+      icon: _poChatBottomNavIcon(chatUnread, selected: false),
+      activeIcon: _poChatBottomNavIcon(chatUnread, selected: true),
+      label: '채팅',
+    ),
+    const BottomNavigationBarItem(
+      icon: Icon(Icons.star_border_rounded),
+      activeIcon: Icon(Icons.star_rounded),
+      label: '즐겨찾기',
+    ),
+  ];
 }
 
 String _matchingFieldStr(dynamic v) =>
@@ -597,6 +969,8 @@ String _matchingUserDisplayName(Map<String, dynamic> d) {
 }
 
 String _matchingUserRegionsLine(Map<String, dynamic> d) {
+  final po = PoRegionFields.fromUserMap(d);
+  if (po.regionFull.isNotEmpty) return po.regionFull;
   final rf = _matchingFieldStr(d['regionFull']);
   if (rf.isNotEmpty) return rf;
   final single = _matchingFieldStr(d['region']);
@@ -671,21 +1045,182 @@ String _companyProfileRegionsLine(Map<String, dynamic> d) {
   return line;
 }
 
+/// `businessVerificationStatus` 정규화 (없거나 알 수 없으면 unverified).
+String poNormalizeBusinessVerificationStatus(dynamic raw) {
+  final s = raw is String ? raw.trim().toLowerCase() : '';
+  switch (s) {
+    case 'pending':
+      return 'pending';
+    case 'verified':
+      return 'verified';
+    case 'rejected':
+      return 'rejected';
+    case 'unverified':
+      return 'unverified';
+    default:
+      return 'unverified';
+  }
+}
+
+/// UI·마이페이지용: `verifiedBusiness == true` 이면 검증 완료로 간주.
+String poBusinessVerificationUiState(Map<String, dynamic>? doc) {
+  if (doc == null) return 'unverified';
+  final vb = doc['verifiedBusiness'];
+  if (vb == true) return 'verified';
+  return poNormalizeBusinessVerificationStatus(
+    doc['businessVerificationStatus'],
+  );
+}
+
+bool poBusinessVerificationShowVerifiedBadge(Map<String, dynamic>? d) {
+  if (d == null) return false;
+  final vb = d['verifiedBusiness'];
+  if (vb == true) return true;
+  if (poNormalizeBusinessVerificationStatus(d['businessVerificationStatus']) ==
+      'verified') {
+    return true;
+  }
+  final legacy = d['businessLicenseStatus'];
+  return legacy == true;
+}
+
+/// `users.role` 기준 관리자 (기본 사용자는 필드 없음 → 일반 사용자).
+///
+/// 보안 참고:
+/// 관리자 UI는 클라에서만 숨김 처리합니다. 모든 승인/반려 쓰기는
+/// [Firestore Security Rules에서 role==admin만 허용]하도록 강화해야 합니다.
+bool poIsAdminUser(Map<String, dynamic>? userDoc) =>
+    _matchingFieldStr(userDoc?['role']).toLowerCase() == 'admin';
+
+Widget poVerifiedCompanyBadgeChip({double fontSize = 11}) {
+  return DecoratedBox(
+    decoration: BoxDecoration(
+      color: const Color(0xFF1565C0),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      child: Text(
+        '인증업체',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: fontSize,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -0.2,
+          height: 1.15,
+        ),
+      ),
+    ),
+  );
+}
+
+/// 마이페이지·프로필 본인용 상태 한 줄 안내.
+String poBusinessVerificationMyPageLine(String normalized) {
+  switch (normalized) {
+    case 'pending':
+      return '심사중 · 제출 서류 검토 후 안내합니다.';
+    case 'verified':
+      return '인증업체 · 사업자 인증이 완료되었습니다.';
+    case 'rejected':
+      return '반려됨 · 사유 확인 후 재신청할 수 있습니다.';
+    case 'unverified':
+    default:
+      return '미인증 · 사업자 인증 신청을 진행해 주세요.';
+  }
+}
+
 String _companyProfileLicenseStatus(Map<String, dynamic> d) {
+  if (poBusinessVerificationShowVerifiedBadge(d)) return '인증업체';
   final v = d['businessLicenseStatus'];
-  if (v == null) return '미등록';
+  if (v is bool && v == true) return '인증업체';
+  if (v == null) return '미인증';
   if (v is bool) {
-    return v ? '인증' : '미인증';
+    return v ? '인증업체' : '미인증';
   }
   if (v is String) {
     final t = v.trim();
-    return t.isEmpty ? '미등록' : t;
+    if (t.isEmpty) return '미인증';
+    final low = t.toLowerCase();
+    if (low == 'verified' || low == '인증' || t == '인증업체') return '인증업체';
+    return '미인증';
   }
-  return v.toString();
+  return '미인증';
 }
 
 String _finishDetailFieldStr(dynamic v) =>
     v is String ? v.trim() : '';
+
+/// imageUrl이 실제 이미지 URL인지 검사.
+/// Firebase console 링크·에러 문자열은 이미지로 처리하지 않음.
+bool _isValidImageUrl(String url) {
+  if (url.isEmpty) return false;
+  if (!url.startsWith('http')) return false;
+  if (url.contains('console.firebase.google.com')) return false;
+  if (url.contains('firestore.googleapis.com')) return false;
+  return true;
+}
+
+/// Firebase 에러 링크·에러 문자열이 포함된 필드 값을 빈 문자열로 처리.
+/// 카드 내부에 에러 문자열이 그대로 노출되는 것을 방지.
+String _safeTextOrEmpty(dynamic v) {
+  if (v is! String) return '';
+  final s = v.trim();
+  if (s.isEmpty) return '';
+  if (s.contains('console.firebase.google.com')) return '';
+  if (s.startsWith('FirebaseException') ||
+      s.startsWith('Error:') ||
+      s.startsWith('Exception:') ||
+      s.startsWith('[cloud_firestore')) {
+    return '';
+  }
+  return s;
+}
+
+String _formatFinishDetailCreatedAt(dynamic v) {
+  final dt = _firestoreAsDateTime(v);
+  if (dt == null) return '-';
+  return '${dt.year}.${dt.month.toString().padLeft(2, '0')}.${dt.day.toString().padLeft(2, '0')} '
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
+Future<void> _confirmDeleteFinishDetail(
+  BuildContext context,
+  DocumentReference<Map<String, dynamic>> docRef,
+) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('마감 디테일 삭제'),
+      content: const Text('이 마감 디테일을 삭제할까요? 저장된 정보가 제거됩니다.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('취소'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.red.shade700,
+          ),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('삭제'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  try {
+    await docRef.delete();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('삭제했습니다.')),
+    );
+  } on Object catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('삭제 실패: $e')),
+    );
+  }
+}
 
 void _showFinishDetailImagePreview(BuildContext context, String? rawUrl) {
   final url = _finishDetailFieldStr(rawUrl);
@@ -735,6 +1270,17 @@ void _showFinishDetailImagePreview(BuildContext context, String? rawUrl) {
   );
 }
 
+int _finishDetailCreatedCompare(
+  QueryDocumentSnapshot<Map<String, dynamic>> a,
+  QueryDocumentSnapshot<Map<String, dynamic>> b,
+) {
+  final ta = a.data()['createdAt'];
+  final tb = b.data()['createdAt'];
+  final da = ta is Timestamp ? ta.millisecondsSinceEpoch : 0;
+  final db = tb is Timestamp ? tb.millisecondsSinceEpoch : 0;
+  return db.compareTo(da);
+}
+
 /// 업체 프로필: `users/{partnerUid}/finishDetails` — 인덱스 없이 스냅샷 후 클라이언트 정렬.
 class _CompanyFinishDetailsSection extends StatelessWidget {
   const _CompanyFinishDetailsSection({required this.partnerUid});
@@ -742,17 +1288,6 @@ class _CompanyFinishDetailsSection extends StatelessWidget {
   final String partnerUid;
 
   static const Color _accent = Color(0xFF007AFF);
-
-  int _createdCompare(
-    QueryDocumentSnapshot<Map<String, dynamic>> a,
-    QueryDocumentSnapshot<Map<String, dynamic>> b,
-  ) {
-    final ta = a.data()['createdAt'];
-    final tb = b.data()['createdAt'];
-    final da = ta is Timestamp ? ta.millisecondsSinceEpoch : 0;
-    final db = tb is Timestamp ? tb.millisecondsSinceEpoch : 0;
-    return db.compareTo(da);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -773,19 +1308,20 @@ class _CompanyFinishDetailsSection extends StatelessWidget {
           );
         }
         if (snapshot.hasError) {
-          return Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 8),
-            child: Text(
-              '마감 디테일을 불러오지 못했습니다.',
-              style: textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
+          poReportFirestoreSnapshotError(
+            'finishDetails_partner_profile',
+            snapshot.error!,
+          );
+          return poFirestoreUserErrorPlaceholder(
+            context,
+            verticalPadding: 16,
           );
         }
 
         final rawDocs = snapshot.data?.docs ?? [];
         final docs = List<QueryDocumentSnapshot<Map<String, dynamic>>>.from(
           rawDocs,
-        )..sort(_createdCompare);
+        )..sort(_finishDetailCreatedCompare);
 
         if (docs.isEmpty) {
           return Text(
@@ -804,6 +1340,7 @@ class _CompanyFinishDetailsSection extends StatelessWidget {
               if (i > 0) const SizedBox(height: 12),
               _FinishDetailCard(
                 data: docs[i].data(),
+                createdAt: docs[i].data()['createdAt'],
                 accent: _accent,
                 textTheme: textTheme,
                 onImageTap: (url) =>
@@ -817,25 +1354,150 @@ class _CompanyFinishDetailsSection extends StatelessWidget {
   }
 }
 
-class _FinishDetailCard extends StatelessWidget {
-  const _FinishDetailCard({
-    required this.data,
-    required this.accent,
-    required this.textTheme,
-    required this.onImageTap,
+/// 내 마감 디테일 목록 — MyPage와 ProfileManagement 화면에서 공통으로 사용.
+/// [userId]: 조회할 사용자 UID
+/// [editable]: true이면 삭제 버튼 표시
+class FinishDetailsListWidget extends StatelessWidget {
+  const FinishDetailsListWidget({
+    super.key,
+    required this.userId,
+    this.editable = false,
   });
 
-  final Map<String, dynamic> data;
-  final Color accent;
-  final TextTheme textTheme;
-  final void Function(String? url) onImageTap;
+  final String userId;
+  final bool editable;
+
+  static const Color _accent = Color(0xFF007AFF);
 
   @override
   Widget build(BuildContext context) {
-    final title = _finishDetailFieldStr(data['title']);
-    final description = _finishDetailFieldStr(data['description']);
-    final category = _finishDetailFieldStr(data['category']);
-    final imageUrl = _finishDetailFieldStr(data['imageUrl']);
+    final textTheme = Theme.of(context).textTheme;
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .collection('finishDetails')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ),
+          );
+        }
+        if (snapshot.hasError) {
+          debugPrint('[FinishDetailsListWidget] Firestore error: ${snapshot.error}');
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '내 마감 디테일',
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '마감 디테일을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.',
+                style: textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade600,
+                  height: 1.45,
+                ),
+              ),
+            ],
+          );
+        }
+
+        final rawDocs = snapshot.data?.docs ?? [];
+        final docs = List<QueryDocumentSnapshot<Map<String, dynamic>>>.from(
+          rawDocs,
+        )..sort(_finishDetailCreatedCompare);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '내 마감 디테일',
+              style: textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '등록한 사진과 설명을 확인·삭제할 수 있습니다.',
+              style: textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade600,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (docs.isEmpty)
+              Text(
+                '아직 등록된 마감 디테일이 없습니다.',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
+              )
+            else
+              for (var i = 0; i < docs.length; i++) ...[
+                if (i > 0) const SizedBox(height: 12),
+                _FinishDetailCard(
+                  data: docs[i].data(),
+                  createdAt: docs[i].data()['createdAt'],
+                  accent: _accent,
+                  textTheme: textTheme,
+                  onImageTap: (url) =>
+                      _showFinishDetailImagePreview(context, url),
+                  onDelete: editable
+                      ? () => _confirmDeleteFinishDetail(
+                            context,
+                            docs[i].reference,
+                          )
+                      : null,
+                ),
+              ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _FinishDetailCard extends StatelessWidget {
+  const _FinishDetailCard({
+    required this.data,
+    this.createdAt,
+    required this.accent,
+    required this.textTheme,
+    required this.onImageTap,
+    this.onDelete,
+  });
+
+  final Map<String, dynamic> data;
+  final dynamic createdAt;
+  final Color accent;
+  final TextTheme textTheme;
+  final void Function(String? url) onImageTap;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = _safeTextOrEmpty(data['title']);
+    final description = _safeTextOrEmpty(data['description']);
+    final category = _safeTextOrEmpty(data['category']);
+    final rawImageUrl = _finishDetailFieldStr(data['imageUrl']);
+    final imageUrl = _isValidImageUrl(rawImageUrl) ? rawImageUrl : '';
+    final createdLabel = _formatFinishDetailCreatedAt(createdAt);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -854,19 +1516,33 @@ class _FinishDetailCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(13)),
             child: Material(
               color: Colors.grey.shade200,
               child: InkWell(
-                onTap: imageUrl.isEmpty ? null : () => onImageTap(imageUrl),
+                onTap:
+                    imageUrl.isEmpty ? null : () => onImageTap(imageUrl),
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
                   child: imageUrl.isEmpty
                       ? Center(
-                          child: Icon(
-                            Icons.image_not_supported_outlined,
-                            size: 40,
-                            color: Colors.grey.shade500,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.image_not_supported_outlined,
+                                size: 38,
+                                color: Colors.grey.shade400,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '등록된 사진 없음',
+                                style: textTheme.bodySmall?.copyWith(
+                                  color: Colors.grey.shade500,
+                                ),
+                              ),
+                            ],
                           ),
                         )
                       : Image.network(
@@ -878,15 +1554,23 @@ class _FinishDetailCard extends StatelessWidget {
                               child: SizedBox(
                                 width: 32,
                                 height: 32,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               ),
                             );
                           },
-                          errorBuilder: (context, error, stackTrace) => Center(
-                            child: Icon(
-                              Icons.broken_image_outlined,
-                              size: 36,
-                              color: Colors.grey.shade500,
+                          errorBuilder:
+                              (context, error, stackTrace) => Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Text(
+                                '이미지를 불러오지 못했습니다.',
+                                textAlign: TextAlign.center,
+                                style: textTheme.bodySmall?.copyWith(
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -915,19 +1599,21 @@ class _FinishDetailCard extends StatelessWidget {
                       color: Colors.grey.shade600,
                     ),
                   ),
-                if (description.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    description,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: Colors.grey.shade800,
-                      height: 1.45,
-                    ),
+                const SizedBox(height: 8),
+                Text(
+                  description.isEmpty ? '설명 없음' : description,
+                  style: textTheme.bodySmall?.copyWith(
+                    color:
+                        description.isEmpty
+                            ? Colors.grey.shade500
+                            : Colors.grey.shade800,
+                    height: 1.45,
                   ),
-                ],
+                ),
                 if (category.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Container(
+                    alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 5,
@@ -944,6 +1630,41 @@ class _FinishDetailCard extends StatelessWidget {
                       style: textTheme.labelSmall?.copyWith(
                         color: accent,
                         fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '카테고리: 미등록',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Text(
+                  '등록일 · $createdLabel',
+                  style: textTheme.labelSmall?.copyWith(
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (onDelete != null) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: onDelete,
+                    icon:
+                        Icon(Icons.delete_outline, color: Colors.red.shade700),
+                    label: Text(
+                      '삭제',
+                      style: TextStyle(color: Colors.red.shade700),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.red.shade200),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
@@ -1032,9 +1753,7 @@ bool _matchingRequestRegionOverlapsUser(
 ) {
   final u = PoRegionFields.fromUserMap(user);
   final r = PoRegionFields.fromCollaborationMap(request);
-  if (u.regions.isEmpty || r.regions.isEmpty) return false;
-  final rs = r.regions.toSet();
-  return u.regions.any(rs.contains);
+  return poRegionFieldsOverlap(u, r);
 }
 
 bool _matchingServiceCategoriesAlign(
@@ -1196,6 +1915,36 @@ String _collaborationReqServiceCategoriesLine(Map<String, dynamic>? d) {
     }
   }
   return out.isEmpty ? '미등록' : out.join(' · ');
+}
+
+String _collaborationReqPrimaryCategoryDisplay(Map<String, dynamic>? d) {
+  if (d == null) return '-';
+  final p = _collaborationRequestString(d['primaryCategory']).trim();
+  return p.isEmpty ? '-' : p;
+}
+
+/// `serviceCategories`에서 세부 시공분야(서브) 위주로 묶음.
+String _collaborationReqDetailServiceCategoriesLine(Map<String, dynamic>? d) {
+  if (d == null) return '-';
+  final raw = d['serviceCategories'];
+  if (raw is! List || raw.isEmpty) return '-';
+  final out = <String>[];
+  for (final e in raw) {
+    if (e is String) {
+      final t = e.trim();
+      if (t.isNotEmpty) out.add(t);
+    } else if (e is Map) {
+      final m = Map<String, dynamic>.from(e);
+      final sub = _matchingFieldStr(m['sub']);
+      final main = _matchingFieldStr(m['main']);
+      if (sub.isNotEmpty) {
+        out.add(sub);
+      } else if (main.isNotEmpty) {
+        out.add(main);
+      }
+    }
+  }
+  return out.isEmpty ? '-' : out.join(' · ');
 }
 
 String _collaborationReqStatusLine(Map<String, dynamic>? d) {
@@ -1370,6 +2119,12 @@ Widget _collaborationRequestDetailFieldsCard({
           const SizedBox(height: 14),
           _collaborationDetailLabeledBlock(
             textTheme: textTheme,
+            label: '모집 마감',
+            body: _collaborationRecruitmentDeadlineLine(data),
+          ),
+          const SizedBox(height: 14),
+          _collaborationDetailLabeledBlock(
+            textTheme: textTheme,
             label: '출장 여부',
             body: _collaborationReqOnSiteLabel(data),
           ),
@@ -1441,6 +2196,7 @@ Widget _collaborationCardFromFirestoreDoc(
     title: displayTitle,
     region: displayLocation,
     when: date.isEmpty ? '-' : date,
+    deadlineLine: _collaborationRecruitmentDeadlineLine(d),
     accentLine: accentLine,
     titleStatusChip: statusChip,
     showUrgentBadge: isUrgent,
@@ -1626,6 +2382,22 @@ Widget _collaborationFeedListCard(
                       ),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(Icons.event_available_outlined,
+                          size: 16, color: Colors.grey.shade600),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '모집 마감 · ${_collaborationRecruitmentDeadlineLine(d)}',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -1661,19 +2433,9 @@ Widget _collaborationFeedListCard(
                             .collection('users')
                             .doc(ownerUid)
                             .get();
-                        final phone = poUserPrimaryPhone(u.data() ?? {});
                         if (!context.mounted) return;
-                        if (phone.isEmpty) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('등록된 전화번호가 없습니다.'),
-                            ),
-                          );
-                          return;
-                        }
-                        final sanitized =
-                            phone.replaceAll(RegExp(r'[^\d+]'), '');
-                        await _launchBusinessPhone(Uri.parse('tel:$sanitized'));
+                        await poShowBusinessPhoneSheet(
+                            context, u.data() ?? {});
                       },
               ),
               IconButton(
@@ -1726,6 +2488,12 @@ class _MainShellState extends State<MainShell> {
   final Set<String> _selectedMainCategories = <String>{};
   final Set<String> _subKeys = <String>{};
   bool _favoritesOnly = false;
+  String? _homeSelectedSortOption;
+  /// true = 내림차순(↓), false = 오름차순(↑). [기본순]일 때는 UI·정렬에서 무시.
+  bool _homeSortDescending = true;
+
+  String? _collabSelectedSortOption;
+  bool _collabSortDescending = true;
 
   final TextEditingController _regionDialogController =
       TextEditingController();
@@ -1801,6 +2569,33 @@ class _MainShellState extends State<MainShell> {
       _subKeys.clear();
       _searchKeywordController.clear();
     });
+  }
+
+  void _openSortFilterSheet() {
+    final isCollabTab = _tabIndex == 1;
+    showPoListSortSheet(
+      context: context,
+      accent: _accent,
+      sortChoices: isCollabTab
+          ? kPoListSortChoicesCollab
+          : kPoListSortChoicesHome,
+      initialSelection:
+          isCollabTab ? _collabSelectedSortOption : _homeSelectedSortOption,
+      initialDescending:
+          isCollabTab ? _collabSortDescending : _homeSortDescending,
+      onPick: (opt, desc) {
+        if (!mounted) return;
+        setState(() {
+          if (isCollabTab) {
+            _collabSelectedSortOption = opt;
+            _collabSortDescending = desc;
+          } else {
+            _homeSelectedSortOption = opt;
+            _homeSortDescending = desc;
+          }
+        });
+      },
+    );
   }
 
   void _openCategoryFilterSheet() {
@@ -1960,23 +2755,67 @@ class _MainShellState extends State<MainShell> {
               maintainState: true,
               maintainAnimation: true,
               maintainSize: false,
-              child: PoMainListHeader(
-                accent: _accent,
-                regionLabel: _regionFilter.isEmpty ? '전체 지역' : _regionFilter,
-                onRegionTap: _pickRegionDialog,
-                searchController: _searchKeywordController,
-                searchFocusNode: _searchKeywordFocusNode,
-                onSearchChanged: () => setState(() {}),
-                onSearchClear: _clearSearchKeyword,
-                onNotificationTap: () => _openPoNotifications(context),
-                onProfileTap: _onProfileTap,
-                favoritesOnly: _favoritesOnly,
-                onFavoritesOnlyChanged: (bool v) =>
-                    setState(() => _favoritesOnly = v),
-                selectedMainCategories:
-                    Set<String>.from(_selectedMainCategories),
-                selectedSubKeys: _subKeys,
-                onOpenCategoryFilter: _openCategoryFilterSheet,
+              child: Builder(
+                builder: (ctx) {
+                  final nUid = FirebaseAuth.instance.currentUser?.uid;
+                  Widget headerBody(int unread) => PoMainListHeader(
+                        accent: _accent,
+                        regionLabel: _regionFilter.isEmpty
+                            ? '전체 지역'
+                            : _regionFilter,
+                        onRegionTap: _pickRegionDialog,
+                        searchController: _searchKeywordController,
+                        searchFocusNode: _searchKeywordFocusNode,
+                        onSearchChanged: () => setState(() {}),
+                        onSearchClear: _clearSearchKeyword,
+                        onNotificationTap: () =>
+                            _openPoNotifications(context),
+                        onProfileTap: _onProfileTap,
+                        favoritesOnly: _favoritesOnly,
+                        onFavoritesOnlyChanged: (bool v) =>
+                            setState(() => _favoritesOnly = v),
+                        selectedMainCategories:
+                            Set<String>.from(_selectedMainCategories),
+                        selectedSubKeys: _subKeys,
+                        onOpenCategoryFilter: _openCategoryFilterSheet,
+                        selectedSortOption: _tabIndex == 1
+                            ? _collabSelectedSortOption
+                            : _homeSelectedSortOption,
+                        sortDescending: _tabIndex == 1
+                            ? _collabSortDescending
+                            : _homeSortDescending,
+                        onOpenSortSheet: _openSortFilterSheet,
+                        notificationUnreadCount: unread,
+                      );
+
+                  if (nUid == null) {
+                    return headerBody(0);
+                  }
+
+                  return StreamBuilder<
+                      QuerySnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance
+                        .collection('notifications')
+                        .where('userId', isEqualTo: nUid)
+                        .where('isRead', isEqualTo: false)
+                        .snapshots(),
+                    builder: (context, nSnap) {
+                      if (nSnap.hasError) {
+                        poReportFirestoreSnapshotError(
+                          'notifications_unread_badge',
+                          nSnap.error!,
+                        );
+                      }
+                      var unread = 0;
+                      if (!nSnap.hasError &&
+                          nSnap.hasData &&
+                          nSnap.data != null) {
+                        unread = nSnap.data!.docs.length;
+                      }
+                      return headerBody(unread);
+                    },
+                  );
+                },
               ),
             ),
             if (_tabIndex == 2) _myRequestsTopBar(context),
@@ -1992,6 +2831,8 @@ class _MainShellState extends State<MainShell> {
                         Set<String>.from(_selectedMainCategories),
                     subKeySet: Set<String>.from(_subKeys),
                     favoritesOnly: _favoritesOnly,
+                    selectedSortOption: _homeSelectedSortOption,
+                    sortDescending: _homeSortDescending,
                   ),
                   CollaborationFeedTabBody(
                     regionFilter: _regionFilter,
@@ -2000,6 +2841,8 @@ class _MainShellState extends State<MainShell> {
                         Set<String>.from(_selectedMainCategories),
                     subKeySet: Set<String>.from(_subKeys),
                     favoritesOnly: _favoritesOnly,
+                    selectedSortOption: _collabSelectedSortOption,
+                    sortDescending: _collabSortDescending,
                   ),
                   const MyRequestsTabScreen(),
                   const ChatTabScreen(),
@@ -2010,43 +2853,60 @@ class _MainShellState extends State<MainShell> {
           ],
         ),
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _tabIndex,
-        onTap: (i) => setState(() => _tabIndex = i),
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: Colors.white,
-        elevation: 8,
-        selectedItemColor: _accent,
-        unselectedItemColor: Colors.grey.shade600,
-        selectedFontSize: 12,
-        unselectedFontSize: 11,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            activeIcon: Icon(Icons.home_rounded),
-            label: '홈',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.handshake_outlined),
-            activeIcon: Icon(Icons.handshake),
-            label: '구인·협업',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.note_add_outlined),
-            activeIcon: Icon(Icons.note_add),
-            label: '내 요청',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.chat_bubble_outline_rounded),
-            activeIcon: Icon(Icons.chat_rounded),
-            label: '채팅',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.star_border_rounded),
-            activeIcon: Icon(Icons.star_rounded),
-            label: '즐겨찾기',
-          ),
-        ],
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Builder(
+          builder: (ctx) {
+            final uid = FirebaseAuth.instance.currentUser?.uid;
+            if (uid == null || uid.isEmpty) {
+              return BottomNavigationBar(
+                currentIndex: _tabIndex,
+                onTap: (i) => setState(() => _tabIndex = i),
+                type: BottomNavigationBarType.fixed,
+                backgroundColor: Colors.white,
+                elevation: 8,
+                selectedItemColor: _accent,
+                unselectedItemColor: Colors.grey.shade600,
+                selectedFontSize: 12,
+                unselectedFontSize: 11,
+                items: _poMainShellBottomNavItems(0),
+              );
+            }
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('chats')
+                  .where('participants', arrayContains: uid)
+                  .snapshots(),
+              builder: (context, chatSnap) {
+                if (chatSnap.hasError) {
+                  poReportFirestoreSnapshotError(
+                    'chats_unread_badge',
+                    chatSnap.error!,
+                  );
+                }
+                var chatUnread = 0;
+                if (!chatSnap.hasError &&
+                    chatSnap.hasData &&
+                    chatSnap.data != null) {
+                  chatUnread =
+                      poChatUnreadTotalForUser(chatSnap.data!, uid);
+                }
+                return BottomNavigationBar(
+                  currentIndex: _tabIndex,
+                  onTap: (i) => setState(() => _tabIndex = i),
+                  type: BottomNavigationBarType.fixed,
+                  backgroundColor: Colors.white,
+                  elevation: 8,
+                  selectedItemColor: _accent,
+                  unselectedItemColor: Colors.grey.shade600,
+                  selectedFontSize: 12,
+                  unselectedFontSize: 11,
+                  items: _poMainShellBottomNavItems(chatUnread),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
@@ -2080,13 +2940,33 @@ class _OwnerRequestDetailScreenState extends State<OwnerRequestDetailScreen> {
     if (_workBusy) return;
     setState(() => _workBusy = true);
     try {
-      await FirebaseFirestore.instance
+      final reqRef = FirebaseFirestore.instance
           .collection('collaborationRequests')
-          .doc(widget.requestId.trim())
-          .update(<String, Object?>{
+          .doc(widget.requestId.trim());
+      final cur = await reqRef.get();
+      final partner = _collaborationRequestString(
+        cur.data()?['selectedApplicantUid'],
+      ).trim();
+      if (partner.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('채택된 업체가 없습니다.')),
+        );
+        return;
+      }
+      await reqRef.update(<String, Object?>{
         'status': 'in_progress',
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      unawaited(createNotification(
+        userId: partner,
+        type: 'status',
+        title: '작업이 시작되었습니다',
+        body: '협업 작업이 시작 상태로 변경되었습니다',
+        targetId: widget.requestId.trim(),
+        targetType: 'request',
+      ));
+      if (!mounted) return;
     } on Object catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2120,6 +3000,14 @@ class _OwnerRequestDetailScreenState extends State<OwnerRequestDetailScreen> {
         'status': 'completed',
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      unawaited(createNotification(
+        userId: partner,
+        type: 'status',
+        title: '작업이 완료되었습니다',
+        body: '협업 작업이 완료되었습니다',
+        targetId: widget.requestId.trim(),
+        targetType: 'request',
+      ));
       if (!mounted) return;
       await Navigator.of(context).push<void>(
         poSmoothPushRoute<void>(
@@ -2224,22 +3112,21 @@ class _OwnerRequestDetailScreenState extends State<OwnerRequestDetailScreen> {
         ),
         centerTitle: true,
       ),
-      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('collaborationRequests')
-            .doc(widget.requestId)
-            .snapshots(),
-        builder: (context, snap) {
+      body: SafeArea(
+        top: false,
+        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('collaborationRequests')
+              .doc(widget.requestId)
+              .snapshots(),
+          builder: (context, snap) {
           if (snap.hasError) {
+            poReportFirestoreSnapshotError(
+              'owner_manage_request_doc',
+              snap.error!,
+            );
             return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  '공고를 불러오지 못했습니다.\n${snap.error}',
-                  textAlign: TextAlign.center,
-                  style: textTheme.bodyMedium,
-                ),
-              ),
+              child: poFirestoreUserErrorPlaceholder(context),
             );
           }
           if (snap.connectionState == ConnectionState.waiting &&
@@ -2257,7 +3144,12 @@ class _OwnerRequestDetailScreenState extends State<OwnerRequestDetailScreen> {
           }
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+            padding: EdgeInsets.fromLTRB(
+              20,
+              12,
+              20,
+              poFullScreenScrollBottomPadding(context),
+            ),
             children: [
               _collaborationRequestDetailFieldsCard(
                 textTheme: textTheme,
@@ -2339,6 +3231,7 @@ class _OwnerRequestDetailScreenState extends State<OwnerRequestDetailScreen> {
             ],
           );
         },
+        ),
       ),
     );
   }
@@ -2497,8 +3390,15 @@ class _EvaluationScreenState extends State<EvaluationScreen> {
         ),
         centerTitle: true,
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          12,
+          20,
+          poFullScreenScrollBottomPadding(context),
+        ),
         children: [
           Text(
             '항목별 1~10점을 선택한 뒤, 총평을 남겨 주세요.',
@@ -2560,6 +3460,7 @@ class _EvaluationScreenState extends State<EvaluationScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 }
@@ -2585,6 +3486,8 @@ class PartnerRequestDetailScreen extends StatefulWidget {
 class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen> {
   static const Color _accent = Color(0xFF007AFF);
 
+  bool _applicationActionBusy = false;
+
   bool _loadingOwner = true;
   bool _favorited = false;
   bool _favoriteBusy = false;
@@ -2593,6 +3496,7 @@ class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen>
   String _ownerBizShop = '미등록';
   String _ownerPrimaryCat = '미등록';
   String _ownerPhoneRaw = '';
+  Map<String, dynamic> _ownerData = const {};
 
   @override
   void initState() {
@@ -2689,6 +3593,7 @@ class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen>
           _ownerBizShop = '미등록';
           _ownerPrimaryCat = '미등록';
           _ownerPhoneRaw = '';
+          _ownerData = const {};
         } else {
           _ownerDisplayName = poHomeUserCardTitle(data);
           final regLine = _matchingUserRegionsLine(data);
@@ -2703,6 +3608,7 @@ class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen>
           final pc = _matchingFieldStr(data['primaryCategory']);
           _ownerPrimaryCat = pc.isEmpty ? '미등록' : pc;
           _ownerPhoneRaw = poUserPrimaryPhone(data);
+          _ownerData = data;
         }
       });
     } on Object {
@@ -2714,20 +3620,315 @@ class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen>
         _ownerBizShop = '미등록';
         _ownerPrimaryCat = '미등록';
         _ownerPhoneRaw = '';
+        _ownerData = const {};
       });
     }
   }
 
   void _dialOwnerPhone() {
-    final raw = _ownerPhoneRaw.trim();
-    if (raw.isEmpty) {
+    poShowBusinessPhoneSheet(context, _ownerData);
+  }
+
+  Future<void> _confirmCancelApplication(
+    DocumentReference<Map<String, dynamic>> appRef,
+  ) async {
+    if (_applicationActionBusy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('지원 취소'),
+        content: const Text('이 공고 지원을 취소할까요? 취소 후에는 상태만 \'취소됨\'으로 바뀌며 삭제되지 않습니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('닫기'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('지원 취소'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _applicationActionBusy = true);
+    try {
+      await appRef.set(<String, Object?>{
+        'status': 'cancelled',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('등록된 전화번호가 없습니다.')),
+        const SnackBar(content: Text('지원을 취소했습니다.')),
       );
-      return;
+    } on Object catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('취소 처리 실패: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _applicationActionBusy = false);
     }
-    final sanitized = raw.replaceAll(RegExp(r'[^\d+]'), '');
-    _launchBusinessPhone(Uri.parse('tel:$sanitized'));
+  }
+
+  Widget _myApplicationSection(
+    TextTheme textTheme,
+    Map<String, dynamic>? reqData,
+  ) {
+    final meUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (meUid.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FilledButton(
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('로그인이 필요합니다.')),
+              );
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: _accent,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('협업 가능'),
+          ),
+          const SizedBox(height: 10),
+        ],
+      );
+    }
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('collaborationRequests')
+          .doc(widget.requestId.trim())
+          .collection('applications')
+          .doc(meUid)
+          .snapshots(),
+      builder: (context, appSnap) {
+        if (appSnap.hasError) {
+          poReportFirestoreSnapshotError(
+            'partner_my_application_doc',
+            appSnap.error!,
+          );
+          return poFirestoreUserErrorPlaceholder(
+            context,
+            verticalPadding: 12,
+          );
+        }
+        final hasDoc =
+            appSnap.hasData && appSnap.data != null && appSnap.data!.exists;
+
+        void openApplyForm() {
+          Navigator.of(context).push(poSmoothPushRoute<void>(
+            ApplyToRequestScreen(requestId: widget.requestId.trim()),
+          ));
+        }
+
+        if (!hasDoc) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              FilledButton(
+                onPressed: openApplyForm,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _accent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('협업 가능'),
+              ),
+              const SizedBox(height: 10),
+            ],
+          );
+        }
+
+        final appMap = appSnap.data!.data() ?? <String, dynamic>{};
+        final appStatus =
+            _collaborationRequestString(appMap['status']).toLowerCase();
+        final statusLine = collaborationMyApplicantCombinedStatusKo(appMap);
+        final appliedAt =
+            _firestoreAsDateTime(appMap['createdAt']) ??
+                _firestoreAsDateTime(appMap['updatedAt']);
+        final appliedAtStr = appliedAt == null
+            ? '-'
+            : '${appliedAt.year}.${appliedAt.month.toString().padLeft(2, '0')}.${appliedAt.day.toString().padLeft(2, '0')} '
+                '${appliedAt.hour.toString().padLeft(2, '0')}:'
+                '${appliedAt.minute.toString().padLeft(2, '0')}';
+
+        Widget actionRow() {
+          if (_applicationActionBusy) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+              ),
+            );
+          }
+
+          if (appStatus == 'pending') {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: openApplyForm,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _accent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('지원 수정'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () =>
+                            _confirmCancelApplication(appSnap.data!.reference),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red.shade700,
+                          side: BorderSide(color: Colors.red.shade300),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text('지원 취소'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+              ],
+            );
+          }
+
+          if (appStatus == 'cancelled' || appStatus == 'rejected') {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton(
+                  onPressed: openApplyForm,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                child: const Text('다시 지원하기'),
+                ),
+                const SizedBox(height: 10),
+              ],
+            );
+          }
+
+          if (appStatus == 'accepted') {
+            return const SizedBox.shrink();
+          }
+
+          return const SizedBox(height: 4);
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: _accent.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _accent.withValues(alpha: 0.22)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '내 지원',
+                      style: textTheme.labelSmall?.copyWith(
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      statusLine,
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: _accent,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _collaborationDetailLabeledBlock(
+                      textTheme: textTheme,
+                      label: '제안 금액',
+                      body: collaborationFormatProposedPrice(
+                        appMap['proposedPrice'],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _collaborationDetailLabeledBlock(
+                      textTheme: textTheme,
+                      label: '가능 일정',
+                      body:
+                          _collaborationReqMissingStr(appMap, 'availableSchedule'),
+                    ),
+                    const SizedBox(height: 10),
+                    _collaborationDetailLabeledBlock(
+                      textTheme: textTheme,
+                      label: '자재 조건·준비',
+                      body: _collaborationReqMissingStr(appMap, 'materialOffer'),
+                    ),
+                    const SizedBox(height: 10),
+                    _collaborationDetailLabeledBlock(
+                      textTheme: textTheme,
+                      label: '메시지',
+                      body: _collaborationReqMissingStr(appMap, 'message'),
+                    ),
+                    const SizedBox(height: 10),
+                    _collaborationDetailLabeledBlock(
+                      textTheme: textTheme,
+                      label: '지원 상태 (문서)',
+                      body: collaborationApplicationStatusKo(appMap['status']),
+                    ),
+                    const SizedBox(height: 10),
+                    _collaborationDetailLabeledBlock(
+                      textTheme: textTheme,
+                      label: '지원일',
+                      body: appliedAtStr,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            actionRow(),
+          ],
+        );
+      },
+    );
   }
 
   Widget _ownerCard(TextTheme textTheme) {
@@ -2846,41 +4047,48 @@ class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen>
         ),
         centerTitle: true,
       ),
-      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('collaborationRequests')
-            .doc(widget.requestId)
-            .snapshots(),
-        builder: (context, reqSnap) {
-          if (reqSnap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  '공고를 불러오지 못했습니다.\n${reqSnap.error}',
-                  textAlign: TextAlign.center,
-                  style: textTheme.bodyMedium,
-                ),
-              ),
-            );
-          }
-          if (reqSnap.connectionState == ConnectionState.waiting &&
-              !reqSnap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final reqData = reqSnap.data?.data();
-          final chatTitle = reqData == null
-              ? '협업 요청'
-              : _collaborationDisplayTitle(reqData);
+      body: SafeArea(
+        top: false,
+        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('collaborationRequests')
+              .doc(widget.requestId)
+              .snapshots(),
+          builder: (context, reqSnap) {
+            if (reqSnap.hasError) {
+              poReportFirestoreSnapshotError(
+                'partner_request_detail_doc',
+                reqSnap.error!,
+              );
+              return Center(
+                child: poFirestoreUserErrorPlaceholder(context),
+              );
+            }
+            if (reqSnap.connectionState == ConnectionState.waiting &&
+                !reqSnap.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final reqData = reqSnap.data?.data();
+            final chatTitle = reqData == null
+                ? '협업 요청'
+                : _collaborationDisplayTitle(reqData);
 
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-            children: [
+            return ListView(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                12,
+                20,
+                poFullScreenScrollBottomPadding(context),
+              ),
+              children: [
               _collaborationRequestDetailFieldsCard(
                 textTheme: textTheme,
                 data: reqData,
                 showStatus: true,
               ),
+              const SizedBox(height: 16),
+              _myApplicationSection(
+                  textTheme, reqData),
               const SizedBox(height: 16),
               _ownerCard(textTheme),
               const SizedBox(height: 20),
@@ -2938,61 +4146,6 @@ class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen>
                 child: const Text('채팅 문의'),
               ),
               const SizedBox(height: 10),
-              Builder(
-                builder: (context) {
-                  final meUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-                  if (meUid.isEmpty) {
-                    return FilledButton(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('로그인이 필요합니다.')),
-                        );
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _accent,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text('협업 가능'),
-                    );
-                  }
-                  return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    stream: FirebaseFirestore.instance
-                        .collection('collaborationRequests')
-                        .doc(widget.requestId)
-                        .collection('applications')
-                        .doc(meUid)
-                        .snapshots(),
-                    builder: (context, appSnap) {
-                      final hasApp = appSnap.hasData &&
-                          appSnap.data != null &&
-                          appSnap.data!.exists;
-                      return FilledButton(
-                        onPressed: () {
-                          Navigator.of(context).push(poSmoothPushRoute<void>(
-                            ApplyToRequestScreen(
-                              requestId: widget.requestId,
-                            ),
-                          ));
-                        },
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _accent,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: Text(hasApp ? '지원 수정' : '협업 가능'),
-                      );
-                    },
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
               OutlinedButton.icon(
                 onPressed: _favoriteBusy ? null : _toggleFavoriteRequestInterest,
                 icon: Icon(
@@ -3012,6 +4165,7 @@ class _PartnerRequestDetailScreenState extends State<PartnerRequestDetailScreen>
             ],
           );
         },
+        ),
       ),
     );
   }
@@ -3223,6 +4377,21 @@ class _ApplyToRequestScreenState extends State<ApplyToRequestScreen> {
 
       await appRef.set(payload, SetOptions(merge: true));
 
+      if (!existingSnap.exists) {
+        final ownerUid =
+            _collaborationRequestString(_requestData?['ownerUid']).trim();
+        if (ownerUid.isNotEmpty && ownerUid != user.uid) {
+          unawaited(createNotification(
+            userId: ownerUid,
+            type: 'application',
+            title: '새 협업 지원이 도착했습니다',
+            body: '$applicantDisplayName님이 협업을 지원했습니다',
+            targetId: widget.requestId.trim(),
+            targetType: 'request',
+          ));
+        }
+      }
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('협업 지원이 제출되었습니다.')),
@@ -3271,8 +4440,15 @@ class _ApplyToRequestScreenState extends State<ApplyToRequestScreen> {
                     ),
                   ),
                 )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+              : SafeArea(
+                  top: false,
+                  child: ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    12,
+                    20,
+                    poFullScreenScrollBottomPadding(context),
+                  ),
                   children: [
                     if (_blockAccepted)
                       Padding(
@@ -3442,6 +4618,7 @@ class _ApplyToRequestScreenState extends State<ApplyToRequestScreen> {
                     ),
                   ],
                 ),
+                ),
     );
   }
 }
@@ -3504,6 +4681,14 @@ class _RequestApplicationsScreenState extends State<RequestApplicationsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('지원을 채택했습니다.')),
       );
+      unawaited(createNotification(
+        userId: applicantUid.trim(),
+        type: 'accepted',
+        title: '협업 지원이 채택되었습니다',
+        body: '지원한 협업 요청이 채택되었습니다',
+        targetId: widget.requestId.trim(),
+        targetType: 'request',
+      ));
     } on StateError catch (e) {
       if (!context.mounted) return;
       final msg = e.message == 'matched_other'
@@ -3538,6 +4723,14 @@ class _RequestApplicationsScreenState extends State<RequestApplicationsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('지원을 거절했습니다.')),
       );
+      unawaited(createNotification(
+        userId: applicantUid.trim(),
+        type: 'rejected',
+        title: '협업 지원이 거절되었습니다',
+        body: '지원한 협업 요청이 거절되었습니다',
+        targetId: widget.requestId.trim(),
+        targetType: 'request',
+      ));
     } on Object catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3649,11 +4842,19 @@ class _RequestApplicationsScreenState extends State<RequestApplicationsScreen> {
         ),
         centerTitle: true,
       ),
-      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      body: SafeArea(
+        top: false,
+        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: reqRef.snapshots(),
         builder: (context, reqSnap) {
           if (reqSnap.hasError) {
-            return Center(child: Text('${reqSnap.error}'));
+            poReportFirestoreSnapshotError(
+              'request_applications_req_doc',
+              reqSnap.error!,
+            );
+            return Center(
+              child: poFirestoreUserErrorPlaceholder(context),
+            );
           }
           if (reqSnap.connectionState == ConnectionState.waiting &&
               !reqSnap.hasData) {
@@ -3681,7 +4882,13 @@ class _RequestApplicationsScreenState extends State<RequestApplicationsScreen> {
             stream: reqRef.collection('applications').snapshots(),
             builder: (context, appSnap) {
               if (appSnap.hasError) {
-                return Center(child: Text('${appSnap.error}'));
+                poReportFirestoreSnapshotError(
+                  'request_applications_subcoll',
+                  appSnap.error!,
+                );
+                return Center(
+                  child: poFirestoreUserErrorPlaceholder(context),
+                );
               }
               final docs = appSnap.data?.docs ?? <QueryDocumentSnapshot<Map<String, dynamic>>>[];
               final sorted =
@@ -3700,7 +4907,12 @@ class _RequestApplicationsScreenState extends State<RequestApplicationsScreen> {
               }
 
               return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  12,
+                  20,
+                  poFullScreenScrollBottomPadding(context),
+                ),
                 itemCount: sorted.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 14),
                 itemBuilder: (ctx, int index) {
@@ -3895,6 +5107,7 @@ class _RequestApplicationsScreenState extends State<RequestApplicationsScreen> {
             },
           );
         },
+        ),
       ),
     );
   }
@@ -3924,15 +5137,7 @@ class CompanyDetailScreen extends StatelessWidget {
       _requireLoginSnack(context);
       return;
     }
-    final phoneRaw = poUserPrimaryPhone(userData);
-    if (phoneRaw.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('등록된 전화번호가 없습니다.')),
-      );
-      return;
-    }
-    final sanitized = phoneRaw.replaceAll(RegExp(r'[^\d+]'), '');
-    _launchBusinessPhone(Uri.parse('tel:$sanitized'));
+    poShowBusinessPhoneSheet(context, userData);
   }
 
   void _onChat(BuildContext context, String? meUid) {
@@ -4120,7 +5325,7 @@ class CompanyDetailScreen extends StatelessWidget {
             ),
             _infoRow(
               textTheme,
-              '예산 구간',
+              '가성비 구간',
               _companyProfileFieldOrMissing(d, 'priceRange'),
             ),
             _infoRow(
@@ -4174,19 +5379,37 @@ class CompanyDetailScreen extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                8,
+                20,
+                poFullScreenScrollBottomPadding(context),
+              ),
               children: [
-                Text(
-                  poHomeUserCardTitle(d),
-                  style: textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black87,
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        poHomeUserCardTitle(d),
+                        style: textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                    if (poBusinessVerificationShowVerifiedBadge(d)) ...[
+                      const SizedBox(width: 8),
+                      poVerifiedCompanyBadgeChip(fontSize: 11),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 16),
                 infoBody,
@@ -4227,6 +5450,7 @@ class CompanyDetailScreen extends StatelessWidget {
           else
             _bottomActions(context, meUid: null, isFavorite: false),
         ],
+        ),
       ),
     );
   }
@@ -5028,10 +6252,17 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (ctx) {
+        final bottomPad =
+            poBottomSheetContentBottomPadding(ctx, extra: 40);
         return SafeArea(
-          child: Column(
+          top: false,
+          bottom: false,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomPad),
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -5107,6 +6338,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               const SizedBox(height: 8),
             ],
+            ),
           ),
         );
       },
@@ -5329,6 +6561,14 @@ class _ChatScreenState extends State<ChatScreen> {
         _disposeLocalPreviewFile(docId);
       }
       await _notifyChatRoomSummaryOutbound('사진');
+      final u = FirebaseAuth.instance.currentUser;
+      if (u != null) {
+        unawaited(collaborationApplyOutgoingUnreadCounts(
+          chatId: _chatId,
+          myUid: u.uid,
+          partnerUid: widget.partnerUid,
+        ));
+      }
     } on Object catch (e) {
       try {
         await msgRef.update(<String, Object?>{
@@ -5534,6 +6774,11 @@ class _ChatScreenState extends State<ChatScreen> {
             'createdAt': FieldValue.serverTimestamp(),
           });
       await _notifyChatRoomSummaryOutbound(trimmed);
+      unawaited(collaborationApplyOutgoingUnreadCounts(
+        chatId: _chatId,
+        myUid: user.uid,
+        partnerUid: widget.partnerUid,
+      ));
     } on Object catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -5952,8 +7197,16 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _bootstrapChatRoomDocument());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _bootstrapChatRoomDocument();
+      final u = FirebaseAuth.instance.currentUser;
+      if (u != null) {
+        await collaborationResetUnreadForUserInChat(
+          chatId: _chatId,
+          userUid: u.uid,
+        );
+      }
+    });
   }
 
   @override
@@ -5981,7 +7234,9 @@ class _ChatScreenState extends State<ChatScreen> {
         titlePrimary: titlePrimary,
         partnerLabel: partnerLabel,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Divider(height: 1, thickness: 1, color: Colors.grey.shade200),
@@ -5997,15 +7252,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
+                    poReportFirestoreSnapshotError(
+                      'chat_messages',
+                      snapshot.error!,
+                    );
                     return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text(
-                          '메시지를 불러오지 못했습니다.\n${snapshot.error}',
-                          style:
-                              textTheme.bodyMedium?.copyWith(height: 1.45),
-                          textAlign: TextAlign.center,
-                        ),
+                      child: poFirestoreUserErrorPlaceholder(
+                        context,
+                        icon: Icons.chat_bubble_outline_rounded,
                       ),
                     );
                   }
@@ -6032,8 +7286,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
                   return ListView.builder(
                     controller: _scrollController,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      16,
+                      16,
+                      poBottomSheetContentBottomPadding(context, extra: 36),
+                    ),
                     itemCount: msgDocs.length,
                     itemBuilder: (context, index) {
                       return _buildMessageTile(
@@ -6145,6 +7403,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -6336,7 +7595,9 @@ class _MatchingScreenState extends State<MatchingScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
@@ -6436,18 +7697,12 @@ class _MatchingScreenState extends State<MatchingScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Center(
-                      child: Text(
-                        '업체를 불러오지 못했습니다.\n${snapshot.error}',
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey.shade800,
-                          height: 1.45,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
+                  poReportFirestoreSnapshotError(
+                    'collaboration_matching_candidates',
+                    snapshot.error!,
+                  );
+                  return Center(
+                    child: poFirestoreUserErrorPlaceholder(context),
                   );
                 }
 
@@ -6469,7 +7724,12 @@ class _MatchingScreenState extends State<MatchingScreen> {
                 }
 
                 return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    0,
+                    20,
+                    poFullScreenScrollBottomPadding(context),
+                  ),
                   itemCount: rows.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
@@ -6487,6 +7747,7 @@ class _MatchingScreenState extends State<MatchingScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -6513,15 +7774,7 @@ class _MatchingPartnerCard extends StatelessWidget {
   static const Color _accent = Color(0xFF007AFF);
 
   void _onPhone(BuildContext context, Map<String, dynamic> data) {
-    final phoneRaw = poUserPrimaryPhone(data);
-    if (phoneRaw.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('등록된 전화번호가 없습니다.')),
-      );
-      return;
-    }
-    final sanitized = phoneRaw.replaceAll(RegExp(r'[^\d+]'), '');
-    _launchBusinessPhone(Uri.parse('tel:$sanitized'));
+    poShowBusinessPhoneSheet(context, data);
   }
 
   @override
@@ -6572,6 +7825,11 @@ class _MatchingPartnerCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (poBusinessVerificationShowVerifiedBadge(data))
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4, top: 2),
+                    child: poVerifiedCompanyBadgeChip(fontSize: 10),
+                  ),
                 if (showRecommendBadge)
                   Container(
                     margin: const EdgeInsets.only(right: 6),
@@ -6837,12 +8095,22 @@ class _CollaborationCompleteScreenState
         ),
         centerTitle: true,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                4,
+                20,
+                math.max(
+                  120,
+                  poFullScreenScrollBottomPadding(context),
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -6991,6 +8259,7 @@ class _CollaborationCompleteScreenState
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -7072,12 +8341,22 @@ class _ReviewScreenState extends State<ReviewScreen> {
         ),
         centerTitle: true,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                4,
+                20,
+                math.max(
+                  120,
+                  poFullScreenScrollBottomPadding(context),
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -7171,6 +8450,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -7284,6 +8564,8 @@ class _CollaborationRequestCreateScreenState
   bool _isOnSite = false;
   String _materialCondition = _materialOptions.first;
   bool _isUrgent = false;
+  bool _recruitmentAlwaysOpen = true;
+  DateTime? _recruitmentDeadlineDate;
 
   InputDecoration _fieldDecoration({
     required String label,
@@ -7376,6 +8658,32 @@ class _CollaborationRequestCreateScreenState
     }
   }
 
+  Future<void> _pickRecruitmentDeadlineDate() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final initial = _recruitmentDeadlineDate ?? today;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial.isBefore(today) ? today : initial,
+      firstDate: today,
+      lastDate: DateTime(now.year + 5, 12, 31),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: _accent,
+              onPrimary: Colors.white,
+            ),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+    );
+    if (picked != null && mounted) {
+      setState(() => _recruitmentDeadlineDate = picked);
+    }
+  }
+
   void _selectMain(String main) {
     setState(() {
       _selectedMain = main;
@@ -7433,6 +8741,13 @@ class _CollaborationRequestCreateScreenState
       return;
     }
 
+    if (!_recruitmentAlwaysOpen && _recruitmentDeadlineDate == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('마감일을 선택해 주세요.')),
+      );
+      return;
+    }
+
     final navigator = Navigator.of(context, rootNavigator: true);
     bool dialogOpen = false;
     Object? caught;
@@ -7462,6 +8777,24 @@ class _CollaborationRequestCreateScreenState
 
       final locPack = PoRegionFields.fromRegionFull(location);
 
+      final Map<String, Object?> deadlinePack;
+      if (_recruitmentAlwaysOpen) {
+        deadlinePack = <String, Object?>{
+          'deadlineType': 'always',
+          'deadline': null,
+          'deadlineText': '수시모집중',
+        };
+      } else {
+        final dd = _recruitmentDeadlineDate!;
+        deadlinePack = <String, Object?>{
+          'deadlineType': 'date',
+          'deadline': Timestamp.fromDate(
+            DateTime(dd.year, dd.month, dd.day),
+          ),
+          'deadlineText': _formatDate(dd),
+        };
+      }
+
       await ref.set(<String, Object?>{
         'requestId': requestId,
         'ownerUid': user.uid,
@@ -7469,7 +8802,8 @@ class _CollaborationRequestCreateScreenState
         'title': title,
         'mainCategory': _selectedMain!,
         'serviceCategories': subs,
-        'location': location,
+        'location':
+            locPack.regionFull.isNotEmpty ? locPack.regionFull : location,
         ...poRegionCollaborationFirestoreMap(locPack),
         'date': dateStr,
         'isOnSite': _isOnSite,
@@ -7479,6 +8813,7 @@ class _CollaborationRequestCreateScreenState
         'description': description,
         'workType': title,
         'status': 'open',
+        ...deadlinePack,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -7540,12 +8875,22 @@ class _CollaborationRequestCreateScreenState
         ),
         centerTitle: true,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                8,
+                20,
+                math.max(
+                  120,
+                  poFullScreenScrollBottomPadding(context),
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -7694,6 +9039,67 @@ class _CollaborationRequestCreateScreenState
                     ),
                   ]),
                   const SizedBox(height: 14),
+                  _sectionCard(textTheme, '모집 마감', [
+                    Text(
+                      '마감 방식',
+                      style: textTheme.labelMedium?.copyWith(
+                        color: Colors.grey.shade800,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<bool>(
+                      segments: const <ButtonSegment<bool>>[
+                        ButtonSegment<bool>(
+                          value: false,
+                          label: Text('마감일 지정'),
+                          icon: Icon(Icons.calendar_month_outlined, size: 18),
+                        ),
+                        ButtonSegment<bool>(
+                          value: true,
+                          label: Text('수시모집중'),
+                          icon: Icon(Icons.all_inclusive_rounded, size: 18),
+                        ),
+                      ],
+                      selected: <bool>{_recruitmentAlwaysOpen},
+                      onSelectionChanged: (Set<bool> sel) {
+                        setState(() => _recruitmentAlwaysOpen = sel.first);
+                      },
+                      style: ButtonStyle(
+                        foregroundColor: WidgetStateProperty.resolveWith(
+                          (states) => states.contains(WidgetState.selected)
+                              ? _accent
+                              : Colors.black87,
+                        ),
+                      ),
+                    ),
+                    if (!_recruitmentAlwaysOpen) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: _pickRecruitmentDeadlineDate,
+                        icon: const Icon(Icons.event_rounded, size: 20),
+                        label: Text(
+                          _recruitmentDeadlineDate == null
+                              ? '마감일 선택 (필수)'
+                              : '모집 마감일: ${_formatDate(_recruitmentDeadlineDate!)}',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _accent,
+                          side: BorderSide(
+                              color: _accent.withValues(alpha: 0.45)),
+                          alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ]),
+                  const SizedBox(height: 14),
                   _sectionCard(textTheme, '조건 · 금액', [
                     Text(
                       '자재 조건',
@@ -7804,6 +9210,7 @@ class _CollaborationRequestCreateScreenState
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -7856,6 +9263,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final List<String> _matchingRegions = [];
   String _matchingPriceRange = '';
   String _matchingResponseSpeed = '';
+
+  String _businessVerificationStatusNormalized = 'unverified';
+  String _businessVerificationRejectReason = '';
 
   void _onProfileFieldChanged() {
     _appDisplayNameController.text = computePoAppDisplayName(
@@ -7970,7 +9380,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   /// `users/{uid}` 문서를 현재 폼에 합류(충돌 시 Firestore 우선 적용 후 표시 이름 재계산).
   void _applyFirestoreProfile(Map<String, dynamic> doc) {
-    _hydrateEditableField(_bizRegNumberController, doc, const ['bizRegNumber']);
+    _hydrateEditableField(_bizRegNumberController, doc,
+        const ['bizRegNumber', 'businessNumber']);
     _hydrateEditableField(_businessNameController, doc,
         const ['businessName']);
     _hydrateEditableField(
@@ -7992,6 +9403,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final subs = ServiceCategoryCatalog.distinctSubs(nextKeys);
       _orderedSubLabels = _restoreSubOrderFromDoc(doc, subs);
       _hydrateMatchingFields(doc);
+      _businessVerificationStatusNormalized =
+          poBusinessVerificationUiState(doc);
+      _businessVerificationRejectReason = _matchingFieldStr(
+        doc['businessVerificationRejectReason'],
+      );
     });
     _onProfileFieldChanged();
   }
@@ -8192,6 +9608,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'storeName': _storeNameController.text.trim(),
         'nickname': _nicknameController.text.trim(),
         'appDisplayName': _appDisplayNameController.text.trim(),
+        if (user.email != null && user.email!.trim().isNotEmpty)
+          'email': user.email!.trim(),
         'mainCategories': mainCategories,
         'serviceCategories': serviceCategories,
         'searchCategories': searchCategories,
@@ -8341,12 +9759,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         centerTitle: true,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                8,
+                20,
+                math.max(
+                  120,
+                  poFullScreenScrollBottomPadding(context),
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -8413,41 +9841,106 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '사업자등록증 인증 상태',
+                    '사업자 인증',
                     style: textTheme.bodySmall?.copyWith(
                       color: Colors.grey.shade700,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.verified_user_outlined,
-                        size: 20,
-                        color: Colors.grey.shade600,
+                  if (_businessVerificationStatusNormalized == 'verified') ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: poVerifiedCompanyBadgeChip(fontSize: 12),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  Text(
+                    poBusinessVerificationMyPageLine(
+                      _businessVerificationStatusNormalized,
+                    ),
+                    style: textTheme.bodySmall?.copyWith(
+                      color: Colors.grey.shade800,
+                      height: 1.4,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (_businessVerificationStatusNormalized == 'rejected' &&
+                      _businessVerificationRejectReason.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.red.shade100),
                       ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
                         child: Text(
-                          '미인증 · 서류 제출 대기',
-                          style: textTheme.labelMedium?.copyWith(
-                            color: Colors.grey.shade700,
-                            fontWeight: FontWeight.w600,
+                          '반려 사유: $_businessVerificationRejectReason',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: Colors.red.shade900,
+                            height: 1.4,
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
+                  if (_businessVerificationStatusNormalized == 'pending') ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.amber.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.amber.shade200),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            '심사중',
+                            style: textTheme.labelMedium?.copyWith(
+                              color: Colors.amber.shade900,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  if (_businessVerificationStatusNormalized == 'unverified' ||
+                      _businessVerificationStatusNormalized == 'rejected')
+                    OutlinedButton(
+                      onPressed: () {
+                        runWithBriefLoading(context, () {
+                          if (!context.mounted) return;
+                          Navigator.of(context).push(poSmoothPushRoute<void>(
+                            const BusinessVerificationScreen(),
+                          ));
+                        });
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _accent,
+                        side: BorderSide(
+                          color: _accent.withValues(alpha: 0.45),
+                        ),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        _businessVerificationStatusNormalized == 'rejected'
+                            ? '재신청하기'
+                            : '사업자 인증 신청',
+                      ),
+                    ),
                   const SizedBox(height: 22),
                   _sectionLabel('[매장/브랜드 정보]', textTheme),
                   TextField(
@@ -8517,6 +10010,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     icon: const Icon(Icons.photo_camera_back_outlined),
                     label: const Text('마감 디테일 등록'),
                   ),
+                  const SizedBox(height: 16),
+                  Builder(
+                    builder: (context) {
+                      final profileUid =
+                          FirebaseAuth.instance.currentUser?.uid ?? '';
+                      if (profileUid.isEmpty) return const SizedBox.shrink();
+                      return FinishDetailsListWidget(
+                        userId: profileUid,
+                        editable: true,
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
@@ -8545,6 +10050,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -8663,6 +10169,11 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
         SettableMetadata(contentType: 'image/jpeg'),
       );
       final imageUrl = await storageRef.getDownloadURL();
+      // ignore: avoid_print
+      debugPrint(
+        '[FinishDetailCreate] Storage upload OK path=finish_details/${user.uid}/'
+        '$timestamp.jpg imageUrl=$imageUrl',
+      );
 
       final docRef = FirebaseFirestore.instance
           .collection('users')
@@ -8677,6 +10188,11 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
         'category': category,
         'createdAt': FieldValue.serverTimestamp(),
       });
+      // ignore: avoid_print
+      debugPrint(
+        '[FinishDetailCreate] Firestore write OK users/${user.uid}/finishDetails/'
+        '${docRef.id} (title="$title")',
+      );
 
       if (!mounted) return;
       navigator.pop();
@@ -8713,12 +10229,22 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
         ),
         centerTitle: true,
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                12,
+                20,
+                math.max(
+                  120,
+                  poFullScreenScrollBottomPadding(context),
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -8822,6 +10348,7 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -8929,6 +10456,7 @@ class _CollaborationCard extends StatelessWidget {
     required this.title,
     required this.region,
     required this.when,
+    required this.deadlineLine,
     this.accentLine = '',
     this.titleStatusChip,
     this.showUrgentBadge = false,
@@ -8939,6 +10467,7 @@ class _CollaborationCard extends StatelessWidget {
   final String title;
   final String region;
   final String when;
+  final String deadlineLine;
   /// 상태가 마감 등일 때 강조 보조 줄(홈).
   final String accentLine;
   /// 모집중/마감/완료 칩(요청 탭 등).
@@ -9101,6 +10630,22 @@ class _CollaborationCard extends StatelessWidget {
                               style: textTheme.labelSmall?.copyWith(
                                 color: _accent,
                                 fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.event_available_outlined,
+                              size: 16, color: Colors.grey.shade600),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              '모집 마감 · $deadlineLine',
+                              style: textTheme.bodySmall?.copyWith(
+                                color: Colors.grey.shade700,
                               ),
                             ),
                           ),

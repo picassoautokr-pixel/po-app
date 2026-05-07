@@ -96,6 +96,8 @@ class _ChatTabScreenState extends State<ChatTabScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
+        top: false,
+        bottom: false,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -143,17 +145,14 @@ class _ChatTabScreenState extends State<ChatTabScreen> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   if (snapshot.hasError) {
+                    poReportFirestoreSnapshotError(
+                      'chats_tab_list',
+                      snapshot.error!,
+                    );
                     return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: SelectableText(
-                          '목록 로드 오류 (${snapshot.error}).\n'
-                          'Firestore에 participants·updatedAt 복합 색인이 필요할 수 있습니다.',
-                          style: textTheme.bodySmall?.copyWith(
-                            color: Colors.grey.shade800,
-                            height: 1.45,
-                          ),
-                        ),
+                      child: poFirestoreUserErrorPlaceholder(
+                        context,
+                        icon: Icons.chat_bubble_outline_rounded,
                       ),
                     );
                   }
@@ -182,7 +181,12 @@ class _ChatTabScreenState extends State<ChatTabScreen> {
                   }
 
                   return ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 20),
+                    padding: EdgeInsets.fromLTRB(
+                      12,
+                      4,
+                      12,
+                      poMainShellTabScrollBottomPadding(context),
+                    ),
                     itemCount: filtered.length,
                     separatorBuilder: (_, _) =>
                         Divider(height: 1, color: Colors.grey.shade200),

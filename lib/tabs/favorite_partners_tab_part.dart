@@ -64,6 +64,135 @@ Future<void> _launchBusinessPhone(Uri uri) async {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 업체 전화 UX 헬퍼
+// ---------------------------------------------------------------------------
+
+/// 전화 옵션 항목 (라벨 + 번호 쌍).
+class _BusinessPhoneOption {
+  const _BusinessPhoneOption({required this.label, required this.number});
+  final String label;
+  final String number;
+}
+
+/// 문서 데이터에서 전화 옵션 목록 추출.
+///
+/// - storePhone / mobilePhone / virtualPhone 우선 확인
+/// - 셋 다 없으면 phone → phoneNumber → businessPhone fallback
+/// - 필드 자체가 없거나(null), String 이 아닌 타입이어도 crash 없이 '' 처리
+List<_BusinessPhoneOption> _extractBusinessPhoneOptions(
+    Map<String, dynamic> d) {
+  /// 키가 없거나 null이면 '', String이 아닌 타입도 '' 반환.
+  String s(String key) {
+    final v = d[key];
+    return (v is String) ? v.trim() : '';
+  }
+
+  final opts = <_BusinessPhoneOption>[];
+  final store = s('storePhone');
+  final mobile = s('mobilePhone');
+  final virtual = s('virtualPhone');
+
+  if (store.isNotEmpty) {
+    opts.add(_BusinessPhoneOption(label: '매장으로 전화', number: store));
+  }
+  if (mobile.isNotEmpty) {
+    opts.add(_BusinessPhoneOption(label: '휴대폰으로 전화', number: mobile));
+  }
+  if (virtual.isNotEmpty) {
+    opts.add(_BusinessPhoneOption(label: '대표번호로 전화', number: virtual));
+  }
+
+  if (opts.isEmpty) {
+    for (final key in const ['phone', 'phoneNumber', 'businessPhone']) {
+      final raw = s(key);
+      if (raw.isNotEmpty) {
+        opts.add(_BusinessPhoneOption(label: '전화하기', number: raw));
+        break;
+      }
+    }
+  }
+  return opts;
+}
+
+/// 업체 전화 연결 UX.
+///
+/// - storePhone + mobilePhone 둘 다 있으면 → bottom sheet 선택
+/// - 하나만 있으면 → 바로 연결
+/// - 없으면 → "등록된 전화번호가 없습니다" 스낵바
+///
+/// 모든 경로에서 [context.mounted] 및 sanitized 번호 유효성을 검증한다.
+Future<void> poShowBusinessPhoneSheet(
+    BuildContext context, Map<String, dynamic> data) async {
+  final opts = _extractBusinessPhoneOptions(data);
+
+  if (opts.isEmpty) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('등록된 전화번호가 없습니다.')),
+    );
+    return;
+  }
+
+  if (opts.length == 1) {
+    final sanitized = opts.first.number.replaceAll(RegExp(r'[^\d+]'), '');
+    if (sanitized.isEmpty) return;
+    await _launchBusinessPhone(Uri.parse('tel:$sanitized'));
+    return;
+  }
+
+  if (!context.mounted) return;
+  await showModalBottomSheet<void>(
+    context: context,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '전화 연결',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ...opts.map(
+              (opt) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.call_outlined),
+                  label: Text(opt.label),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF007AFF),
+                    side: BorderSide(
+                      color: const Color(0xFF007AFF).withValues(alpha: 0.45),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    final sanitized =
+                        opt.number.replaceAll(RegExp(r'[^\d+]'), '');
+                    if (sanitized.isEmpty) return;
+                    await _launchBusinessPhone(Uri.parse('tel:$sanitized'));
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class FavoritePartnersTabScreen extends StatelessWidget {
   const FavoritePartnersTabScreen({super.key});
 
@@ -89,6 +218,15 @@ class FavoritePartnersTabScreen extends StatelessWidget {
         stream:
             FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
         builder: (context, userSnap) {
+          if (userSnap.hasError) {
+            poReportFirestoreSnapshotError(
+              'favorite_partners_user_doc',
+              userSnap.error!,
+            );
+            return Center(
+              child: poFirestoreUserErrorPlaceholder(context),
+            );
+          }
           final partnerRaw = userSnap.data?.data()?['favoritePartnerUids'];
           final partnerIds = partnerRaw is Iterable
               ? partnerRaw
@@ -137,14 +275,12 @@ class FavoritePartnersTabScreen extends StatelessWidget {
                 return const Center(child: CircularProgressIndicator());
               }
               if (fb.hasError) {
+                poReportFirestoreSnapshotError(
+                  'favorite_partners_fetch',
+                  fb.error!,
+                );
                 return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      _firestoreLoadErrorHint(fb.error!),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
+                  child: poFirestoreUserErrorPlaceholder(context),
                 );
               }
               final lists = fb.data;
@@ -232,6 +368,13 @@ class FavoritePartnersTabScreen extends StatelessWidget {
                                               ),
                                             ),
                                           ),
+                                          if (poBusinessVerificationShowVerifiedBadge(d))
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.only(right: 4),
+                                              child: poVerifiedCompanyBadgeChip(
+                                                  fontSize: 10),
+                                            ),
                                           Icon(Icons.star_rounded,
                                               color: _accent, size: 22),
                                         ],
@@ -283,7 +426,7 @@ class FavoritePartnersTabScreen extends StatelessWidget {
                                         runSpacing: 4,
                                         children: [
                                           Text(
-                                            '예산 · ${price.isEmpty ? '-' : price}',
+                                            '가성비 · ${price.isEmpty ? '-' : price}',
                                             style: textTheme.labelSmall
                                                 ?.copyWith(
                                               color: Colors.grey.shade700,
@@ -436,6 +579,13 @@ class FavoritePartnersTabScreen extends StatelessWidget {
                         },
                       ),
                     ),
+                  SliverPadding(
+                    padding: EdgeInsets.only(
+                      bottom:
+                          poMainShellTabScrollBottomPadding(context),
+                    ),
+                    sliver: const SliverToBoxAdapter(child: SizedBox.shrink()),
+                  ),
                 ],
               );
             },
