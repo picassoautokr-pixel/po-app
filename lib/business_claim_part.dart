@@ -444,8 +444,10 @@ class _BusinessClaimScreenState extends State<BusinessClaimScreen> {
 
   Future<String> _uploadImage(XFile file, String storagePath) async {
     final ref = FirebaseStorage.instance.ref(storagePath);
-    await ref.putFile(
-      File(file.path),
+    // 웹/모바일 공통: putData(바이트) 사용
+    final bytes = await file.readAsBytes();
+    await ref.putData(
+      bytes,
       SettableMetadata(contentType: 'image/jpeg'),
     );
     return ref.getDownloadURL();

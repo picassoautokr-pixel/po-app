@@ -17,7 +17,8 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _categoryController = TextEditingController();
 
-  String? _imagePath;
+  String? _imagePath;  // 모바일에서는 파일 경로, 웹에서는 blob URL
+  XFile? _pickedXFile;  // 웹/모바일 공통 XFile
   bool _saving = false;
 
   @override
@@ -68,7 +69,10 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
       imageQuality: 85,
     );
     if (x == null || !mounted) return;
-    setState(() => _imagePath = x.path);
+    setState(() {
+      _pickedXFile = x;
+      _imagePath = x.path;
+    });
   }
 
   Future<void> _submit() async {
@@ -108,8 +112,11 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
       final storageRef = FirebaseStorage.instance.ref(
         'finish_details/${user.uid}/$timestamp.jpg',
       );
-      await storageRef.putFile(
-        File(_imagePath!),
+      // 웹/모바일 공통: putData(바이트) 사용
+      final uploadXFile = _pickedXFile ?? XFile(_imagePath!);
+      final bytes = await uploadXFile.readAsBytes();
+      await storageRef.putData(
+        bytes,
         SettableMetadata(contentType: 'image/jpeg'),
       );
       final imageUrl = await storageRef.getDownloadURL();
@@ -248,10 +255,17 @@ class _FinishDetailCreateScreenState extends State<FinishDetailCreateScreen> {
                       borderRadius: BorderRadius.circular(12),
                       child: AspectRatio(
                         aspectRatio: 4 / 3,
-                        child: Image.file(
-                          File(_imagePath!),
-                          fit: BoxFit.cover,
-                        ),
+                        child: kIsWeb
+                            ? Image.network(
+                                _imagePath!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (ctx, e, s) =>
+                                    const Center(child: Icon(Icons.image_outlined)),
+                              )
+                            : Image.file(
+                                platformBuildFile(_imagePath!),
+                                fit: BoxFit.cover,
+                              ),
                       ),
                     ),
                   ],

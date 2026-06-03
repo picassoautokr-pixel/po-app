@@ -1,7 +1,5 @@
 // firebase_options.dart
-// 피오 앱 빌드를 위해 필요한 플랫폼별 옵션입니다.
-// 배포 프로젝트에 맞게 `dart pub global run flutterfire_cli:flutterfire configure`
-// 또는 `flutterfire configure` 로 다시 생성하는 것을 권장합니다.
+// flutterfire configure 로 생성된 플랫폼별 Firebase 옵션.
 //
 // ignore_for_file: lines_longer_than_80_chars
 
@@ -33,59 +31,40 @@ class DefaultFirebaseOptions {
     }
   }
 
-  /// 참고용 샘플(Flutter 공개 e2e 프로젝트). 실 서비스는 자신의 Firebase 프로젝트로 교체하세요.
+  // ── Web ──────────────────────────────────────────────────────────────────
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyB7wZb2tO1-Fs6GbDADUSTs2Qs3w08Hovw',
-    appId: '1:406099696497:web:87e25e51afe982cd3574d0',
-    messagingSenderId: '406099696497',
-    projectId: 'flutterfire-e2e-tests',
-    authDomain: 'flutterfire-e2e-tests.firebaseapp.com',
-    databaseURL:
-        'https://flutterfire-e2e-tests-default-rtdb.europe-west1.firebasedatabase.app',
-    storageBucket: 'flutterfire-e2e-tests.appspot.com',
-    measurementId: 'G-JN95N1JV2E',
+    apiKey: 'AIzaSyAxQS_PATTYsYFCRWXKyqHtWxTAZ0LyTb0',
+    appId: '1:237833043397:web:0fde3f8cb454034dfd5fac',
+    messagingSenderId: '237833043397',
+    projectId: 'po-app-687df',
+    authDomain: 'po-app-687df.firebaseapp.com',
+    storageBucket: 'po-app-687df.firebasestorage.app',
   );
 
+  // ── Android ───────────────────────────────────────────────────────────────
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCdRjCVZlhrq72RuEklEyyxYlBRCYhI2Sw',
-    appId: '1:406099696497:android:0d4ed619c031c0ac3574d0',
-    messagingSenderId: '406099696497',
-    projectId: 'flutterfire-e2e-tests',
-    databaseURL:
-        'https://flutterfire-e2e-tests-default-rtdb.europe-west1.firebasedatabase.app',
-    storageBucket: 'flutterfire-e2e-tests.appspot.com',
+    apiKey: 'AIzaSyDXKF03oPmz8qpauPjUDe4-7SGf2Loq8cQ',
+    appId: '1:237833043397:android:4ec7041125c01b14fd5fac',
+    messagingSenderId: '237833043397',
+    projectId: 'po-app-687df',
+    storageBucket: 'po-app-687df.firebasestorage.app',
   );
 
+  // ── iOS ───────────────────────────────────────────────────────────────────
+  // TODO: iOS google-services.plist 에서 정확한 값을 확인 후 교체하세요.
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyDooSUGSf63Ghq02_iIhtnmwMDs4HlWS6c',
-    appId: '1:406099696497:ios:acd9c8e17b5e620e3574d0',
-    messagingSenderId: '406099696497',
-    projectId: 'flutterfire-e2e-tests',
-    databaseURL:
-        'https://flutterfire-e2e-tests-default-rtdb.europe-west1.firebasedatabase.app',
-    storageBucket: 'flutterfire-e2e-tests.appspot.com',
-    iosClientId:
-        '406099696497-taeapvle10rf355ljcvq5dt134mkghmp.apps.googleusercontent.com',
-    iosBundleId: 'io.flutter.plugins.firebase.tests',
+    apiKey: 'AIzaSyDXKF03oPmz8qpauPjUDe4-7SGf2Loq8cQ',
+    appId: '1:237833043397:ios:0000000000000000fd5fac', // plist에서 교체 필요
+    messagingSenderId: '237833043397',
+    projectId: 'po-app-687df',
+    storageBucket: 'po-app-687df.firebasestorage.app',
+    iosBundleId: 'com.example.poApp',
   );
 
-  static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyDooSUGSf63Ghq02_iIhtnmwMDs4HlWS6c',
-    appId: '1:406099696497:ios:acd9c8e17b5e620e3574d0',
-    messagingSenderId: '406099696497',
-    projectId: 'flutterfire-e2e-tests',
-    databaseURL:
-        'https://flutterfire-e2e-tests-default-rtdb.europe-west1.firebasedatabase.app',
-    storageBucket: 'flutterfire-e2e-tests.appspot.com',
-    androidClientId:
-        '406099696497-tvtvuiqogct1gs1s6lh114jeps7hpjm5.apps.googleusercontent.com',
-    iosClientId:
-        '406099696497-taeapvle10rf355ljcvq5dt134mkghmp.apps.googleusercontent.com',
-    iosBundleId: 'io.flutter.plugins.firebase.tests',
-  );
+  // ── macOS (iOS 설정 재사용) ────────────────────────────────────────────────
+  static const FirebaseOptions macos = ios;
 
-  /// 데스크톱은 Core 초기화를 위해 동일 테스트 프로젝트의 웹 설정을 참조합니다(Google 로그인은 플랫폼별 추가 설정 필요).
+  // ── Windows / Linux (Web 설정 재사용) ────────────────────────────────────
   static const FirebaseOptions windows = web;
-
   static const FirebaseOptions linux = web;
 }

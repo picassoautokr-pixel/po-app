@@ -1,27 +1,13 @@
-import 'dart:async' show StreamSubscription, unawaited;
-import 'dart:io';
-import 'dart:math' as math;
-import 'dart:ui' show PathMetric;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../core/firestore_utils.dart';
 import '../core/navigation.dart';
 import '../core/layout_utils.dart';
-import '../models/collaboration_matching_candidate.dart';
-import '../region_normalize.dart';
-import '../service_category_catalog.dart';
-import '../utils/collaboration_utils.dart';
 
 class _MatchingPartnerCard extends StatelessWidget {
   const _MatchingPartnerCard({

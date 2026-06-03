@@ -152,14 +152,22 @@ class _ChatFullScreenImageView extends StatelessWidget {
                   ),
                 )
               : path.isNotEmpty
-                  ? Image.file(
-                      File(path),
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) => const Text(
-                        '파일을 열 수 없습니다.',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    )
+                  ? (kIsWeb
+                      ? Image.network(
+                          path,
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Text('파일을 열 수 없습니다.',
+                                  style: TextStyle(color: Colors.white70)),
+                        )
+                      : Image.file(
+                          platformBuildFile(path),
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Text('파일을 열 수 없습니다.',
+                                  style: TextStyle(color: Colors.white70)),
+                        ))
+                  
                   : const Text(
                       '표시할 이미지가 없습니다.',
                       style: TextStyle(color: Colors.white70),

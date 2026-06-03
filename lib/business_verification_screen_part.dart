@@ -106,28 +106,9 @@ class _BusinessVerificationScreenState extends State<BusinessVerificationScreen>
     );
   }
 
-  Future<File?> _compressLicenseJpeg(XFile xFile) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final stamp = DateTime.now().microsecondsSinceEpoch;
-      final target = p.join(dir.path, 'biz_license_$stamp.jpg');
-      final out = await FlutterImageCompress.compressAndGetFile(
-        xFile.path,
-        target,
-        quality: 88,
-        minWidth: 1600,
-        minHeight: 1600,
-        format: CompressFormat.jpeg,
-      );
-      if (out != null) return File(out.path);
-    } on Object catch (_) {
-      /* ignore */
-    }
-    try {
-      return File(xFile.path);
-    } on Object catch (_) {
-      return null;
-    }
+  /// 이미지 압축: 모바일은 FlutterImageCompress, 웹은 null 반환 (원본 바이트 사용).
+  Future<dynamic> _compressLicenseJpeg(XFile xFile) async {
+    return platformCompressImage(xFile, quality: 88, maxSide: 1600);
   }
 
   Future<void> _pickImage() async {
@@ -178,21 +159,18 @@ class _BusinessVerificationScreenState extends State<BusinessVerificationScreen>
 
     setState(() => _submitting = true);
     try {
-      final file = await _compressLicenseJpeg(_pickedImageFile!);
-      if (file == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('이미지를 처리하지 못했습니다.')),
-          );
-        }
-        return;
-      }
+      // 모바일: 압축된 File, 웹: null (원본 바이트 사용)
+      final compressedFile = await _compressLicenseJpeg(_pickedImageFile!);
+      final uploadXFile = (compressedFile != null && !kIsWeb)
+          ? XFile((compressedFile as dynamic).path as String)
+          : _pickedImageFile!;
 
       final ts = DateTime.now().millisecondsSinceEpoch;
       final storagePath = 'business_licenses/${user.uid}/$ts.jpg';
       final ref = FirebaseStorage.instance.ref(storagePath);
-      await ref.putFile(
-        file,
+      final bytes = await uploadXFile.readAsBytes();
+      await ref.putData(
+        bytes,
         SettableMetadata(contentType: 'image/jpeg'),
       );
       final url = await ref.getDownloadURL();
@@ -338,10 +316,17 @@ class _BusinessVerificationScreenState extends State<BusinessVerificationScreen>
                       borderRadius: BorderRadius.circular(12),
                       child: AspectRatio(
                         aspectRatio: 4 / 3,
-                        child: Image.file(
-                          File(_pickedImageFile!.path),
-                          fit: BoxFit.cover,
-                        ),
+                        child: kIsWeb
+                            ? Image.network(
+                                _pickedImageFile!.path,
+                                fit: BoxFit.cover,
+                                errorBuilder: (ctx, e, s) =>
+                                    const Center(child: Icon(Icons.image_outlined)),
+                              )
+                            : Image.file(
+                                platformBuildFile(_pickedImageFile!.path),
+                                fit: BoxFit.cover,
+                              ),
                       ),
                     ),
                   ],

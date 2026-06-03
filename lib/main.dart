@@ -1,6 +1,6 @@
 import 'dart:async' show StreamSubscription, unawaited;
-import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' show PathMetric;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -8,16 +8,17 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+// 모바일 전용 패키지 - 웹에서는 컴파일되지 않음
+// ignore: uri_does_not_exist
+import 'platform_io.dart' if (dart.library.html) 'platform_web.dart';
 
 import 'dev_firestore_test_seed.dart';
 import 'firebase_options.dart';

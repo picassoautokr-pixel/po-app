@@ -66,11 +66,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String? _resolveImageLocalPath(String docId, Map<String, dynamic> data) {
     final mem = _localPreviewPaths[docId];
-    if (mem != null && File(mem).existsSync()) return mem;
+    if (mem != null && platformFileExists(mem)) return mem;
     final lp = data['localPath'];
     if (lp is String && lp.trim().isNotEmpty) {
       final path = lp.trim();
-      if (File(path).existsSync()) return path;
+      if (platformFileExists(path)) return path;
     }
     return null;
   }
@@ -89,7 +89,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }) {
     final u = networkUrl?.trim() ?? '';
     var lp = localPath?.trim() ?? '';
-    if (lp.isNotEmpty && !File(lp).existsSync()) lp = '';
+    if (lp.isNotEmpty && !platformFileExists(lp)) lp = '';
     if (u.isEmpty && lp.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -205,24 +205,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final uri = Uri.tryParse(trimmed);
     if (uri == null) return null;
     if (uri.scheme != 'http' && uri.scheme != 'https') return null;
-    try {
-      final response =
-          await http.get(uri).timeout(const Duration(seconds: 45));
-      if (response.statusCode != 200) return null;
-      final bytes = response.bodyBytes;
-      if (bytes.isEmpty) return null;
-      final dir = await getTemporaryDirectory();
-      final ts = DateTime.now().millisecondsSinceEpoch;
-      final name = serial == 0
-          ? 'chat_image_$ts.jpg'
-          : 'chat_image_${ts}_$serial.jpg';
-      final path = p.join(dir.path, name);
-      final file = File(path);
-      await file.writeAsBytes(bytes, flush: true);
-      return XFile(path, mimeType: 'image/jpeg');
-    } on Object {
-      return null;
-    }
+    // 플랫폼 분기: 모바일은 임시 파일 저장, 웹은 null 반환
+    return platformDownloadImageToTemp(imageUrl, serial);
   }
 
   Future<void> _shareSelectedMessages() async {
@@ -314,10 +298,10 @@ class _ChatScreenState extends State<ChatScreen> {
       try {
         if (!hasText && hasFiles) {
           // ignore: deprecated_member_use
-          await Share.shareXFiles(files);
+          await platformShareXFiles(files);
         } else if (hasText && !hasFiles) {
           // ignore: deprecated_member_use
-          await Share.share(combinedText);
+          await platformShareText(combinedText);
         } else if (hasText && hasFiles) {
           await Clipboard.setData(ClipboardData(text: combinedText));
           if (!mounted) return;
@@ -329,7 +313,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           );
           // ignore: deprecated_member_use
-          await Share.shareXFiles(files);
+          await platformShareXFiles(files);
         }
       } on Object {
         if (!mounted) return;
@@ -793,51 +777,36 @@ class _ChatScreenState extends State<ChatScreen> {
     return 'failed';
   }
 
-  Future<File?> _compressChatImage(XFile xFile) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final stamp = DateTime.now().microsecondsSinceEpoch;
-      final salt = math.Random().nextInt(1 << 20);
-      final target = p.join(dir.path, 'chat_cmp_${stamp}_$salt.jpg');
-      final out = await FlutterImageCompress.compressAndGetFile(
-        xFile.path,
-        target,
-        quality: _chatImageCompressQuality,
-        minWidth: _chatImageMaxSide,
-        minHeight: _chatImageMaxSide,
-        format: CompressFormat.jpeg,
-      );
-      if (out != null) return File(out.path);
-    } on Object catch (_) {
-      /* fallback */
-    }
-    try {
-      return File(xFile.path);
-    } on Object catch (_) {
-      return null;
-    }
+  /// 이미지 압축: 모바일은 FlutterImageCompress, 웹은 원본 바이트 사용.
+  /// 반환값: 모바일=File?, 웹=null (웹에서는 XFile 바이트 직접 업로드)
+  Future<dynamic> _compressChatImage(XFile xFile) async {
+    return platformCompressImage(
+      xFile,
+      quality: _chatImageCompressQuality,
+      maxSide: _chatImageMaxSide,
+    );
   }
 
   void _disposeLocalPreviewFile(String docId) {
     final path = _localPreviewPaths.remove(docId);
     _uploadProgress.remove(docId);
     if (path != null) {
-      try {
-        File(path).deleteSync();
-      } on Object catch (_) {}
+      platformDeleteFile(path);
     }
   }
 
   Future<void> _executeUploadForMessage({
     required String docId,
-    required File file,
+    required XFile xFile,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     final storagePath = 'chat_images/$_chatId/$docId.jpg';
     final ref = FirebaseStorage.instance.ref(storagePath);
-    final task = ref.putFile(
-      file,
+    // 플랫폼 분기: 웹=putData(bytes), 모바일=putFile(File)
+    final bytes = await xFile.readAsBytes();
+    final task = ref.putData(
+      bytes,
       SettableMetadata(contentType: 'image/jpeg'),
     );
 
@@ -919,8 +888,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    final file = await _compressChatImage(xFile);
-    if (file == null || !await file.exists()) return;
+    // 모바일: 압축된 File 반환, 웹: null 반환 (원본 바이트 사용)
+    final compressedFile = await _compressChatImage(xFile);
+    // 업로드에 사용할 XFile 결정
+    final uploadXFile = (compressedFile != null && !kIsWeb)
+        ? XFile((compressedFile as dynamic).path as String)
+        : xFile;
 
     if (!mounted) return;
     final col = FirebaseFirestore.instance
@@ -938,7 +911,7 @@ class _ChatScreenState extends State<ChatScreen> {
       'text': '',
       'imageUrl': '',
       'thumbnailUrl': '',
-      'localPath': file.path,
+      'localPath': kIsWeb ? '' : uploadXFile.path,
       'status': 'uploading',
       'progress': 0.0,
       'createdAt': FieldValue.serverTimestamp(),
@@ -947,11 +920,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (!mounted) return;
     setState(() {
-      _localPreviewPaths[id] = file.path;
+      _localPreviewPaths[id] = kIsWeb ? '' : uploadXFile.path;
       _uploadProgress[id] = 0.0;
     });
 
-    await _executeUploadForMessage(docId: id, file: file);
+    await _executeUploadForMessage(docId: id, xFile: uploadXFile);
   }
 
   Future<void> _pickAndUploadGalleryImages() async {
@@ -1008,8 +981,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    final f = File(path);
-    if (!await f.exists()) {
+    if (!platformFileExists(path)) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1018,6 +990,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
+    final f = XFile(path);
 
     try {
       await FirebaseFirestore.instance
@@ -1043,7 +1016,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       setState(() => _uploadProgress[docId] = 0.0);
     }
-    unawaited(_executeUploadForMessage(docId: docId, file: f));
+    unawaited(_executeUploadForMessage(docId: docId, xFile: f));
   }
 
   Future<void> _sendText() async {
@@ -1302,7 +1275,7 @@ class _ChatScreenState extends State<ChatScreen> {
           isMine ? _accent.withValues(alpha: 0.55) : Colors.grey.shade300;
       final hasLocal = resolvedLocal != null &&
           resolvedLocal.isNotEmpty &&
-          File(resolvedLocal).existsSync();
+          platformFileExists(resolvedLocal);
 
       Widget imageChild;
       if (url.isNotEmpty && status == 'complete') {
@@ -1333,19 +1306,9 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       } else if (hasLocal) {
-        imageChild = Image.file(
-          File(resolvedLocal),
-          fit: BoxFit.cover,
-          errorBuilder: (context, err, st) => Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              '미리보기를 불러올 수 없습니다',
-              style: textTheme.bodySmall?.copyWith(
-                color: Colors.grey.shade600,
-              ),
-            ),
-          ),
-        );
+        imageChild = kIsWeb
+            ? const Center(child: CircularProgressIndicator())
+            : _buildLocalImageWidget(resolvedLocal!, textTheme);
       } else {
         imageChild = ColoredBox(
           color: Colors.grey.shade200,
@@ -1730,6 +1693,26 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
         ],
+        ),
+      ),
+    );
+  }
+
+  /// 모바일 전용: 로컬 파일을 Image.file로 표시.
+  /// 웹에서는 이 함수가 호출되지 않습니다 (kIsWeb 분기로 보호됨).
+  Widget _buildLocalImageWidget(String path, TextTheme textTheme) {
+    // ignore: avoid_dynamic_calls
+    return Image.file(
+      // dart:io는 모바일에서만 사용되므로 platform_io.dart에서 처리
+      platformBuildFile(path),
+      fit: BoxFit.cover,
+      errorBuilder: (context, err, st) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          '미리보기를 불러올 수 없습니다',
+          style: textTheme.bodySmall?.copyWith(
+            color: Colors.grey.shade600,
+          ),
         ),
       ),
     );
