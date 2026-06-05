@@ -5,6 +5,8 @@
 //
 // ignore_for_file: avoid_web_libraries_in_flutter
 
+import 'dart:typed_data';
+
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:http/http.dart' as http;
@@ -52,7 +54,7 @@ UploadTask platformPutFile(
   // 웹에서는 filePath가 없으므로 빈 데이터로 업로드 (실제로는 호출되지 않아야 함)
   // 웹 업로드는 uploadXFileToStorageRef() 사용 권장
   return ref.putData(
-    const [],
+    Uint8List(0),
     SettableMetadata(contentType: contentType),
   );
 }

@@ -360,7 +360,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (ty == 'text') {
       final t = (m['text'] as String?)?.trim() ?? '';
       if (t.isEmpty) return;
-      await SharePlus.instance.share(ShareParams(text: t));
+      await platformShareText(t);
     } else if (ty == 'image') {
       final u = (m['imageUrl'] as String?)?.trim() ?? '';
       if (u.isEmpty) return;
@@ -373,7 +373,7 @@ class _ChatScreenState extends State<ChatScreen> {
           );
           return;
         }
-        await SharePlus.instance.share(ShareParams(files: [xf]));
+        await platformShareXFiles([xf]);
       }
 
       await _runWithShareLoading(shareImage);

@@ -193,9 +193,12 @@ class _BusinessVerificationScreenState extends State<BusinessVerificationScreen>
         SetOptions(merge: true),
       );
 
-      try {
-        await file.delete();
-      } on Object catch (_) {}
+      // 모바일에서만 임시 파일 삭제 (웹은 파일 시스템 없음)
+      if (!kIsWeb && compressedFile != null) {
+        try {
+          platformDeleteFile((compressedFile as dynamic).path as String);
+        } on Object catch (_) {}
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

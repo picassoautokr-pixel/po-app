@@ -591,7 +591,7 @@ class _BusinessClaimScreenState extends State<BusinessClaimScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  picked ? p.basename(file.path) : label,
+                  picked ? file.name : label,
                   style: tt.bodyMedium?.copyWith(
                       color: picked
                           ? Colors.green.shade800
